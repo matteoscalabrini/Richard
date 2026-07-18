@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv
+.venvs/
+.richard-install
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.superpowers/
+
+# Local data / models / audio artifacts
+*.sqlite
+*.sqlite3
+*.db
+models/
+*.gguf
+*.onnx
+*.wav
+# ...but voice reference clips are shipped assets the installer deploys
+!assets/voice/*.wav
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+# Large source recordings (voice reference masters) — keep out of git
+*.MP4
+*.mp4
+
+# Local knowledge-graph cache and lockfile (not part of the published repo)
+graphify-out/
+uv.lock
+dist/
+build/

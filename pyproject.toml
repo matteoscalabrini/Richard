@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "richard-companion"
+version = "0.1.0"
+description = "Self-hosted house companion driven by a local LLM — voice, Home Assistant, and automations you talk into existence"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Matteo Scalabrini" }]
+keywords = ["voice-assistant", "home-assistant", "llm", "self-hosted", "home-automation"]
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.27",
+    "numpy>=1.24",
+    "tomli-w>=1.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+voice = [
+    "faster-whisper>=1.0",
+    "kokoro-onnx>=0.4",
+    # Realtime core: Silero VAD runs on onnxruntime directly (kokoro-onnx already
+    # pulls it in, but the realtime path must not depend on the kokoro engine choice).
+    "onnxruntime>=1.17",
+    # 1.3+ dropped the piper-phonemize C-ext for onnxruntime, which is the only
+    # line with macOS-arm64 wheels (1.2 installs on the Pi but not Apple Silicon).
+    "piper-tts>=1.3",
+    "sounddevice>=0.4",
+    "webrtcvad-wheels>=2.0.14",
+    "websockets>=14",
+]
+
+[project.urls]
+Homepage = "https://github.com/matteoscalabrini/Richard"
+Repository = "https://github.com/matteoscalabrini/Richard"
+Issues = "https://github.com/matteoscalabrini/Richard/issues"
+
+[project.scripts]
+richard = "richard.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"richard.web" = ["*.png"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "."]
+testpaths = ["tests"]
+markers = ["gpu: needs CUDA and real model downloads; excluded from the default run"]
+addopts = "-m 'not gpu'"
