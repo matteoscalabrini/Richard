@@ -37,3 +37,6 @@ graphify-out/
 uv.lock
 dist/
 build/
+
+# Local agent instructions (references private material) — never publish
+AGENTS.md
