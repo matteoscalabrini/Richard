@@ -83,7 +83,12 @@ class Engine:
     def _execute(self, name: str, arguments: dict) -> str:
         for provider in self._providers:
             if any(s["function"]["name"] == name for s in provider.schemas()):
-                return provider.execute(name, arguments)
+                try:
+                    return provider.execute(name, arguments)
+                except Exception as exc:
+                    # A provider bug must not kill the turn: handed back as a
+                    # tool result, the model can retry or tell the user.
+                    return f"Tool {name} failed: {exc}"
         return f"Unknown tool: {name}."
 
     def respond(self, conversation: Conversation) -> str:

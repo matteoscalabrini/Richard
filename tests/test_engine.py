@@ -85,6 +85,31 @@ def test_respond_routes_to_owning_provider():
     assert "Extra context." in brain.calls[0][0][0]["content"]
 
 
+def test_tool_exception_becomes_tool_result_instead_of_killing_turn():
+    # A provider bug (e.g. arguments arriving as a non-dict) must reach the
+    # model as an error result it can react to, not abort the whole turn.
+    class ExplodingProvider:
+        def schemas(self):
+            return [{"type": "function", "function": {"name": "do_thing", "parameters": {}}}]
+
+        def execute(self, name, arguments):
+            raise AttributeError("'str' object has no attribute 'get'")
+
+        def context(self):
+            return None
+
+    brain = FakeBrain(
+        [
+            Completion(content=None, tool_calls=[ToolCall(id="1", name="do_thing", arguments={})]),
+            Completion(content="recovered", tool_calls=[]),
+        ]
+    )
+    engine = Engine(brain, [ExplodingProvider()], Personality())
+    assert engine.respond(Conversation()) == "recovered"
+    tool_results = [m for m in brain.calls[1][0] if m.get("role") == "tool"]
+    assert "do_thing failed" in tool_results[-1]["content"]
+
+
 def test_respond_bounded_by_max_rounds():
     always = Completion(content=None, tool_calls=[ToolCall(id="1", name="remember", arguments={"text": "x"})])
     brain = FakeBrain([always] * 10)

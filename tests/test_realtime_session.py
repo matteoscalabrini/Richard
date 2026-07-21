@@ -337,6 +337,18 @@ def test_engine_crash_fails_response_and_survives():
     session.close()
 
 
+def test_engine_crash_speaks_error_line():
+    # An engine failure must be audible, not just an error event the web
+    # client hides in its console — silence reads as a crash to the user.
+    tts = FakeTTS()
+    session, emitted, done = collect_session(engine=ExplodingEngine(), tts=tts)
+    session.feed_audio(FRAME)
+    session.feed_audio(FRAME)
+    wait(done)
+    assert tts.spoken == ["Something went wrong on my end."]
+    session.close()
+
+
 def test_audio_worker_survives_stage_crash():
     class ExplodingDetector(ScriptedDetector):
         def feed(self, frame):

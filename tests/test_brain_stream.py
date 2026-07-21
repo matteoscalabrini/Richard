@@ -58,6 +58,23 @@ def test_stream_assembles_fragmented_tool_calls():
     assert calls[0].arguments == {"on": False}
 
 
+def test_stream_coerces_non_object_tool_arguments_to_empty_dict():
+    def handler(request):
+        return httpx.Response(
+            200,
+            content=_sse(
+                {"choices": [{"delta": {"tool_calls": [
+                    {"index": 0, "id": "c1",
+                     "function": {"name": "call_home_assistant_service", "arguments": '"volu'}}]}}]},
+                {"choices": [{"delta": {"tool_calls": [
+                    {"index": 0, "function": {"arguments": 'me_off"'}}]}}]},
+            ),
+        )
+
+    events = list(_brain(handler).stream([{"role": "user", "content": "mute the bose"}]))
+    assert events[-1].tool_calls[0].arguments == {}
+
+
 def test_stream_wraps_transport_error():
     def handler(request):
         raise httpx.ConnectError("refused")

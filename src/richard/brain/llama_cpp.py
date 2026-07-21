@@ -10,6 +10,17 @@ from richard.conversation import Message
 from richard.errors import BrainUnreachable
 
 
+def _parse_arguments(raw: str) -> dict:
+    """Tool arguments off the wire. Anything but a JSON object becomes {} —
+    small models sometimes emit a bare string or list, and providers index
+    into arguments with .get()."""
+    try:
+        arguments = json.loads(raw or "{}")
+    except (ValueError, TypeError):
+        return {}
+    return arguments if isinstance(arguments, dict) else {}
+
+
 class LlamaCppBrain:
     """OpenAI-compatible chat client for a self-hosted llama.cpp server."""
 
@@ -52,12 +63,12 @@ class LlamaCppBrain:
         tool_calls = []
         for raw in message.get("tool_calls") or []:
             fn = raw.get("function", {})
-            try:
-                arguments = json.loads(fn.get("arguments") or "{}")
-            except (ValueError, TypeError):
-                arguments = {}
             tool_calls.append(
-                ToolCall(id=raw.get("id", ""), name=fn.get("name", ""), arguments=arguments)
+                ToolCall(
+                    id=raw.get("id", ""),
+                    name=fn.get("name", ""),
+                    arguments=_parse_arguments(fn.get("arguments")),
+                )
             )
         return Completion(content=message.get("content"), tool_calls=tool_calls)
 
@@ -103,11 +114,10 @@ class LlamaCppBrain:
             raise BrainUnreachable(str(exc)) from exc
         tool_calls = []
         for _, slot in sorted(acc.items()):
-            try:
-                arguments = json.loads(slot["arguments"] or "{}")
-            except (ValueError, TypeError):
-                arguments = {}
-            tool_calls.append(ToolCall(id=slot["id"], name=slot["name"], arguments=arguments))
+            tool_calls.append(
+                ToolCall(id=slot["id"], name=slot["name"],
+                         arguments=_parse_arguments(slot["arguments"]))
+            )
         # Always emit exactly one terminal event per non-error stream, whether or not
         # [DONE] was received, so callers can rely on a single done=True to close the turn.
         yield StreamEvent(tool_calls=tool_calls, done=True)

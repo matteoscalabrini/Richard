@@ -125,6 +125,39 @@ def test_complete_parses_tool_calls():
     assert (call.id, call.name, call.arguments) == ("abc", "remember", {"text": "likes tea"})
 
 
+def test_complete_coerces_non_object_tool_arguments_to_empty_dict():
+    # Small models sometimes emit arguments that are valid JSON but not an
+    # object (a bare string or list). Providers index into arguments with
+    # .get(), so anything except a dict must be coerced.
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": "abc",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "call_home_assistant_service",
+                                        "arguments": '"volume_off"',
+                                    },
+                                }
+                            ],
+                        }
+                    }
+                ]
+            },
+        )
+
+    brain = LlamaCppBrain("http://box:8080", "m", client=_client(handler))
+    completion = brain.complete([{"role": "user", "content": "mute the bose"}])
+    assert completion.tool_calls[0].arguments == {}
+
+
 def test_complete_without_tool_calls():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"choices": [{"message": {"content": "hi"}}]})

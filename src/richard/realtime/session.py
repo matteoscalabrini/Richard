@@ -18,6 +18,7 @@ from richard.realtime.chunker import ProgressiveChunker
 from richard.realtime.vad import FRAME_BYTES
 
 BRAIN_DOWN_LINE = "I can't reach my brain right now."
+TURN_FAILED_LINE = "Something went wrong on my end."
 
 
 class RealtimeSession:
@@ -176,6 +177,8 @@ class RealtimeSession:
         except Exception as exc:
             status = "failed"
             self._emit(events.error(f"engine failed: {exc}", code="engine_error"))
+            # Audible failure: silence here reads as a crash to the user.
+            self._speak(response_id, TURN_FAILED_LINE)
         if full:
             self.conversation.add_assistant(full)
         if status == "cancelled":
