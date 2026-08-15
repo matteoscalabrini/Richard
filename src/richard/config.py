@@ -28,6 +28,16 @@ class Personality:
 
 
 @dataclass
+class BrainRole:
+    """One named brain endpoint. Empty/None fields inherit: role → conversational → llm_*."""
+
+    endpoint: str = ""
+    model: str = ""
+    api_key: str | None = None
+    timeout: float | None = None
+
+
+@dataclass
 class Voice:
     stt_engine: str = "local"  # "local" (faster-whisper) or "remote" (Whisper server)
     stt_model: str = "base.en"
@@ -121,6 +131,31 @@ class Config:
     satellite: Satellite = field(default_factory=Satellite)
     web: Web = field(default_factory=Web)
     realtime: Realtime = field(default_factory=Realtime)
+    brains: dict[str, BrainRole] = field(default_factory=dict)
+
+
+def resolve_brain_role(config: Config, role: str) -> BrainRole:
+    """A fully-populated BrainRole. Missing fields fall back per-field: the named
+    role, then the conversational role, then the top-level llm_* settings — so a
+    config with no [brains] tables behaves exactly like today's single brain."""
+    chain = [config.brains.get(role)]
+    if role != "conversational":
+        chain.append(config.brains.get("conversational"))
+
+    def pick(attr: str, default):
+        for entry in chain:
+            if entry is not None:
+                value = getattr(entry, attr)
+                if value not in ("", None):
+                    return value
+        return default
+
+    return BrainRole(
+        endpoint=pick("endpoint", config.llm_endpoint),
+        model=pick("model", config.llm_model),
+        api_key=pick("api_key", config.llm_api_key),
+        timeout=pick("timeout", config.llm_timeout),
+    )
 
 
 def default_config_path() -> Path:
@@ -196,6 +231,16 @@ def load_config(path: Path | None = None) -> Config:
         port=int(r.get("port", Realtime.port)),
         token=r.get("token", Realtime.token),
     )
+    brains: dict[str, BrainRole] = {}
+    for role_name, table in (data.get("brains") or {}).items():
+        if not isinstance(table, dict):
+            continue
+        brains[str(role_name)] = BrainRole(
+            endpoint=str(table.get("endpoint", "")),
+            model=str(table.get("model", "")),
+            api_key=table.get("api_key"),
+            timeout=float(table["timeout"]) if "timeout" in table else None,
+        )
     config = Config(
         llm_endpoint=data.get("llm_endpoint", Config.llm_endpoint),
         llm_model=data.get("llm_model", Config.llm_model),
@@ -207,6 +252,7 @@ def load_config(path: Path | None = None) -> Config:
         satellite=satellite,
         web=web,
         realtime=realtime,
+        brains=brains,
     )
     # Environment overrides take precedence over the file.
     config.llm_endpoint = os.environ.get("RICHARD_LLM_ENDPOINT", config.llm_endpoint)
@@ -319,6 +365,20 @@ def save_config(config: Config, path: Path | None = None) -> None:
         "port": config.realtime.port,
         "token": config.realtime.token,
     }
+    if config.brains:
+        brains_table: dict = {}
+        for role_name, role in config.brains.items():
+            entry: dict = {}
+            if role.endpoint:
+                entry["endpoint"] = role.endpoint
+            if role.model:
+                entry["model"] = role.model
+            if role.api_key is not None:
+                entry["api_key"] = role.api_key
+            if role.timeout is not None:
+                entry["timeout"] = role.timeout
+            brains_table[role_name] = entry
+        data["brains"] = brains_table
     with path.open("wb") as f:
         tomli_w.dump(data, f)
     # The file can contain LLM and Home Assistant bearer tokens.

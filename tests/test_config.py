@@ -213,6 +213,47 @@ def test_voice_tts_tuning_roundtrip(tmp_path):
     assert (v.tts_exaggeration, v.tts_cfg_weight, v.tts_temperature, v.tts_speed) == (1.2, 0.7, 0.5, 1.3)
 
 
+def test_brains_default_empty_and_resolve_falls_back_to_llm_settings():
+    from richard.config import BrainRole, resolve_brain_role
+
+    config = Config(llm_endpoint="http://gpu:8080", llm_model="gemma", llm_api_key="k", llm_timeout=99.0)
+    assert config.brains == {}
+    for role in ("conversational", "curator", "escalation"):
+        resolved = resolve_brain_role(config, role)
+        assert resolved == BrainRole(endpoint="http://gpu:8080", model="gemma", api_key="k", timeout=99.0)
+
+
+def test_brains_roundtrip_and_partial_role_inherits_missing_fields(tmp_path):
+    from richard.config import BrainRole, resolve_brain_role
+
+    path = tmp_path / "config.toml"
+    config = Config(llm_endpoint="http://local:8080", llm_model="small")
+    config.brains["curator"] = BrainRole(endpoint="http://gpu:9090", model="big")
+    config.brains["escalation"] = BrainRole(model="big")  # endpoint inherited
+    save_config(config, path)
+    loaded = load_config(path)
+    assert loaded.brains["curator"] == BrainRole(endpoint="http://gpu:9090", model="big")
+    curator = resolve_brain_role(loaded, "curator")
+    assert (curator.endpoint, curator.model, curator.timeout) == ("http://gpu:9090", "big", 180.0)
+    escalation = resolve_brain_role(loaded, "escalation")
+    assert (escalation.endpoint, escalation.model) == ("http://local:8080", "big")
+
+
+def test_role_chains_through_conversational_before_top_level():
+    from richard.config import BrainRole, resolve_brain_role
+
+    config = Config(llm_endpoint="http://old:8080", llm_model="old")
+    config.brains["conversational"] = BrainRole(endpoint="http://new:8080", model="new")
+    curator = resolve_brain_role(config, "curator")
+    assert (curator.endpoint, curator.model) == ("http://new:8080", "new")
+
+
+def test_config_without_brains_table_saves_without_brains_key(tmp_path):
+    path = tmp_path / "config.toml"
+    save_config(Config(), path)
+    assert "brains" not in path.read_text()
+
+
 def test_realtime_and_language_roundtrip(tmp_path):
     path = tmp_path / "config.toml"
     config = load_config(path)

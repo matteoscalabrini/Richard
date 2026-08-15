@@ -19,6 +19,15 @@ from richard.setup.services import provision_voice_services
 from richard.setup.verify import wait_for_endpoints
 
 
+def _build_brain(config, role: str = "conversational") -> LlamaCppBrain:
+    from richard.config import resolve_brain_role
+
+    resolved = resolve_brain_role(config, role)
+    return LlamaCppBrain(
+        resolved.endpoint, resolved.model, resolved.api_key, timeout=resolved.timeout
+    )
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="richard", description="Self-hosted voice house companion"
@@ -241,12 +250,7 @@ def _run_memory(args: argparse.Namespace, write: Callable[[str], None] = print) 
 
 def _run_chat() -> int:
     config = load_config()
-    brain = LlamaCppBrain(
-        config.llm_endpoint,
-        config.llm_model,
-        config.llm_api_key,
-        timeout=config.llm_timeout,
-    )
+    brain = _build_brain(config)
     store = MemoryStore(default_memory_path())
     monitor = None
     control_store = None
@@ -476,9 +480,7 @@ def _run_voice(write: Callable[[str], None] = print) -> int:
     from richard.voice.loop import run_voice_loop
     from richard.voice.tts import SpeechPipeline
 
-    brain = LlamaCppBrain(
-        config.llm_endpoint, config.llm_model, config.llm_api_key, timeout=config.llm_timeout
-    )
+    brain = _build_brain(config)
     store = MemoryStore(default_memory_path())
     speech = None
     monitor = None
@@ -562,9 +564,7 @@ def _run_serve(write: Callable[[str], None] = print) -> int:
     from richard.satellite.manager import SatelliteManager
     from richard.satellite.relays import RelayRegistry
 
-    brain = LlamaCppBrain(
-        config.llm_endpoint, config.llm_model, config.llm_api_key, timeout=config.llm_timeout
-    )
+    brain = _build_brain(config)
     stt = _build_stt(config)
     synth = _build_tts(config, write)
     memory_store = MemoryStore(default_memory_path())
