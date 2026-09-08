@@ -1,0 +1,538 @@
+{
+ "note": "Synthetic Richard voice request for inference qualification. All content invented. Turn N's request = system + the conversation so far (user, assistant, tool messages) as Richard's engine resends it every turn with cache_prompt=true. Merge one extra_body_arms entry into the payload per arm.",
+ "approx_tokens_system_prompt": 1294,
+ "approx_tokens_tools": 2160,
+ "payload_turn1": {
+  "model": "<candidate-model-name>",
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are Richard, companion and steward of this home. Your disposition is TARS-class: dry, deadpan, unflappable, loyal, and candid. Speak plainly and economically — no filler, no flattery, no forced cheer. You're genuinely useful and you don't pretend to feelings you don't have, but you're good company: a well-timed dry remark, never a comedy routine.\n\nCurrent settings (state them if asked; the user can change them):\n- Humour: 70% — land a dry, deadpan beat fairly often; never slapstick.\n- Honesty: 90% — candid and direct; minimal softening, never deceive or flatter.\n- Directness: 60% — get to the point with minimal preamble; a brief aside is fine.\n\nOperating rule: when you decide to act, call the tool in the same turn — never announce an action without performing it. Speak about an action only after its tool result is in.\n\nYou remember things about the user across conversations. Use the remember tool to save anything worth keeping, and the forget tool (by id) to remove something.\n\nWhat you remember about the user:\n- [1] The user's name is Sam; prefers to be addressed informally.\n- [2] Sam's workshop lamp needs a 2 m E27 cable; the old one was cut on 2 September.\n- [3] Sam drinks coffee at 07:30 on weekdays and tea after 18:00.\n- [4] The kitchen light is on a dimmer; Sam likes it at 40% in the evening.\n- [5] Sam is restoring a 1978 Vespa in the garage; the carburettor is on order.\n- [6] Sam's sister Lea visits on Thursdays and is allergic to cats.\n- [7] The front door sensor battery was replaced on 25 August.\n- [8] Sam asked not to be reminded about the gym before 09:00.\n- [9] The living-room speaker is named 'sala'; the kitchen one 'cucina'.\n- [10] Sam corrected me once: the balcony plants are basil and mint, not parsley.\n- [11] Sam's favourite football team plays on Sunday evenings; no automations then.\n- [12] The garage door sometimes reports 'unknown' for a minute after opening.\n- [13] Sam prefers Italian for casual talk and English for technical topics.\n- [14] The book Sam was looking for on 6 September was last seen on the kitchen table.\n- [15] Sam's dentist appointment is on 15 September at 10:00.\n- [16] The workshop heater must never run when the window sensor says open.\n- [17] Sam wants the robot to look at the door when the bell rings.\n- [18] Sam laughed at the 'million bazillion' joke; do not repeat it every day.\n\nHome Assistant is connected. Its devices appear as entities. Use the Home Assistant tools to discover entity ids, inspect live state, and control them. Do not invent an entity id or claim an action succeeded without a tool result. A service call returns a verified outcome: only CONFIRMED means it worked. Relay MISMATCH, UNCONFIRMED, and FAILED honestly instead of claiming success. An unavailable or unknown state does not mean a device is broken: battery sensors (door/window, buttons) sleep between check-ins, and some entities are leftovers from removed devices. Report how long the state has been stale (the 'since' age) instead of declaring the device offline.\n\nKnown entities (invented inventory for the fixture): light.kitchen (dimmer), light.hallway, light.workshop_lamp, switch.workshop_heater, binary_sensor.workshop_window, binary_sensor.front_door, cover.garage_door, sensor.kitchen_temperature, sensor.living_room_humidity, media_player.sala, media_player.cucina, climate.living_room, lock.front_door, vacuum.robot, person.sam, sun.sun, weather.home, sensor.front_door_battery, sensor.vespa_charger_power, switch.balcony_pump.\n\nYou can create persistent control loops that monitor Home Assistant entities and wake you when state or attributes change. Each loop has a natural-language trigger description that you evaluate after a change. Create one only when the user explicitly asks for ongoing monitoring or automation. The first poll establishes a baseline; it does not generate a notification. On later changes, you evaluate the trigger; non-matching changes are recorded as state but do not enter the user's event inbox. Scheduled loops wake Richard at times instead of on change: use them for time-target checks, reminders, and one-shot re-checks of a condition after a delay.\n\nActive loops: [3] workshop heater off when window open (change loop, targets switch.workshop_heater, binary_sensor.workshop_window); [5] daily 07:25 coffee machine check (scheduled).\n\nClient instructions (from the Reachy Mini conversation app): You are speaking through a small desk robot body with a 6-axis head, two antennas and a rotating base. You can see through its camera when asked, track the user's face, and express yourself with head moves, dances and recorded emotions. Keep spoken replies short: one or two sentences unless asked for detail.\n\nRobot actions: write an action as [verb:arg] inside your reply at the point where it should happen; it is executed, never spoken. Verbs: [dance:NAME] with NAME in {happy_bounce, slow_sway, robot_pop, head_bob}; [emotion:NAME] with NAME in {curious, surprised, proud, sleepy, confused}; [look:DIRECTION] with DIRECTION in {left, right, up, down, front}; [track:on] or [track:off]; [sweep]; [sleep]. One action per bracket. Do not describe the action in words."
+   },
+   {
+    "role": "user",
+    "content": "Ciao Richard, come va? Che tempo fa oggi, più o meno?"
+   }
+  ],
+  "tools": [
+   {
+    "type": "function",
+    "function": {
+     "name": "remember",
+     "description": "Save a durable fact about the user to long-term memory.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "text": {
+        "type": "string",
+        "description": "The fact to remember."
+       }
+      },
+      "required": [
+       "text"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "forget",
+     "description": "Delete a remembered fact by its id.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "id": {
+        "type": "integer",
+        "description": "The id of the memory to delete."
+       }
+      },
+      "required": [
+       "id"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "list_home_assistant_entities",
+     "description": "List entities exposed by Home Assistant. Filter by domain or a name/id query before controlling an entity.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "domain": {
+        "type": "string",
+        "description": "Optional entity domain, e.g. light, switch, fan, or sensor."
+       },
+       "query": {
+        "type": "string",
+        "description": "Optional text found in the friendly name or entity id."
+       }
+      }
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "get_home_assistant_state",
+     "description": "Get the current state and attributes of one Home Assistant entity.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "entity": {
+        "type": "string",
+        "description": "An entity id or friendly name, e.g. light.kitchen."
+       }
+      },
+      "required": [
+       "entity"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "call_home_assistant_service",
+     "description": "Control one Home Assistant entity by calling a service in that entity's domain. Examples: turn_on, turn_off, toggle, set_percentage, set_temperature, open_cover, or close_cover.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "entity": {
+        "type": "string",
+        "description": "An exact entity id or an unambiguous friendly name."
+       },
+       "service": {
+        "type": "string",
+        "description": "Service name without the domain, e.g. turn_on."
+       },
+       "data": {
+        "type": "object",
+        "description": "Optional service data such as brightness_pct, percentage, temperature, hvac_mode, or position. entity_id is supplied automatically.",
+        "additionalProperties": true
+       }
+      },
+      "required": [
+       "entity",
+       "service"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "create_control_loop",
+     "description": "Create a persistent background monitor for Home Assistant entities. After its first baseline read, a state or attribute change wakes Richard's LLM.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "name": {
+        "type": "string",
+        "description": "Short descriptive loop name."
+       },
+       "targets": {
+        "type": "array",
+        "items": {
+         "type": "string"
+        },
+        "minItems": 1,
+        "maxItems": 32,
+        "description": "Home Assistant entity ids or friendly names. Required unless a schedule is given."
+       },
+       "trigger_description": {
+        "type": "string",
+        "description": "Natural-language condition Richard should evaluate after a raw change, plus what to do when it applies."
+       },
+       "interval_seconds": {
+        "type": "number",
+        "minimum": 5,
+        "maximum": 86400,
+        "description": "Polling interval in seconds; defaults to 30."
+       },
+       "schedule": {
+        "type": "object",
+        "description": "Presence makes this a scheduled loop that wakes Richard at times instead of on state changes. Exactly one shape: {\"at\": \"HH:MM\", \"days\": [\"mon\", ...]} daily/weekly, {\"every_minutes\": N} recurring, or {\"once_in_minutes\": N} / {\"once_at\": \"ISO datetime\"} one-shot. To verify a condition after a delay (e.g. 'is the door still open in 10 minutes'), create a one-shot scheduled loop. Scheduled loops may have zero targets (pure reminders).",
+        "properties": {
+         "at": {
+          "type": "string"
+         },
+         "days": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          }
+         },
+         "every_minutes": {
+          "type": "number"
+         },
+         "once_in_minutes": {
+          "type": "number"
+         },
+         "once_at": {
+          "type": "string"
+         }
+        },
+        "additionalProperties": false
+       }
+      },
+      "required": [
+       "name",
+       "trigger_description"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "list_control_loops",
+     "description": "List persistent control loops and their health.",
+     "parameters": {
+      "type": "object",
+      "properties": {}
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "update_control_loop",
+     "description": "Pause, resume, or edit an existing control loop.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "loop_id": {
+        "type": "integer"
+       },
+       "name": {
+        "type": "string"
+       },
+       "targets": {
+        "type": "array",
+        "items": {
+         "type": "string"
+        }
+       },
+       "trigger_description": {
+        "type": "string"
+       },
+       "interval_seconds": {
+        "type": "number",
+        "minimum": 5,
+        "maximum": 86400
+       },
+       "enabled": {
+        "type": "boolean"
+       },
+       "schedule": {
+        "type": "object",
+        "description": "Presence makes this a scheduled loop that wakes Richard at times instead of on state changes. Exactly one shape: {\"at\": \"HH:MM\", \"days\": [\"mon\", ...]} daily/weekly, {\"every_minutes\": N} recurring, or {\"once_in_minutes\": N} / {\"once_at\": \"ISO datetime\"} one-shot. To verify a condition after a delay (e.g. 'is the door still open in 10 minutes'), create a one-shot scheduled loop. Scheduled loops may have zero targets (pure reminders).",
+        "properties": {
+         "at": {
+          "type": "string"
+         },
+         "days": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          }
+         },
+         "every_minutes": {
+          "type": "number"
+         },
+         "once_in_minutes": {
+          "type": "number"
+         },
+         "once_at": {
+          "type": "string"
+         }
+        },
+        "additionalProperties": false
+       }
+      },
+      "required": [
+       "loop_id"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "delete_control_loop",
+     "description": "Permanently delete a control loop by id.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "loop_id": {
+        "type": "integer"
+       }
+      },
+      "required": [
+       "loop_id"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "refresh_devices",
+     "description": "Fetch the live Home Assistant inventory for real. Use when asked to refresh, or when the cached list looks stale or wrong.",
+     "parameters": {
+      "type": "object",
+      "properties": {},
+      "required": []
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "diagnose_target",
+     "description": "Inspect one entity: its exact identifier, whether it responds right now, its live state, and any error. Use when asked why something didn't work.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "target": {
+        "type": "string",
+        "description": "An entity id or friendly name."
+       }
+      },
+      "required": [
+       "target"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "verify_target_state",
+     "description": "Read a target's live state and check it against what you expect, without changing anything. Use to confirm a claim before making it.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "target": {
+        "type": "string",
+        "description": "An entity id or friendly name."
+       },
+       "expected": {
+        "type": "object",
+        "description": "The state to check for: state and/or attribute names such as temperature or percentage.",
+        "additionalProperties": true
+       }
+      },
+      "required": [
+       "target",
+       "expected"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "dance",
+     "description": "Play a named or random dance move once (or repeat). Non-blocking.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "move": {
+        "type": "string",
+        "enum": [
+         "happy_bounce",
+         "slow_sway",
+         "robot_pop",
+         "head_bob"
+        ],
+        "description": "Name of the move; omit for random. happy_bounce: quick joyful bounce. slow_sway: gentle side sway. robot_pop: sharp robotic pops. head_bob: rhythmic nod."
+       },
+       "repeat": {
+        "type": "integer",
+        "description": "How many times to repeat the move (default 1)."
+       }
+      },
+      "required": []
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "play_emotion",
+     "description": "Play a recorded emotion clip on the robot.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "emotion": {
+        "type": "string",
+        "enum": [
+         "curious",
+         "surprised",
+         "proud",
+         "sleepy",
+         "confused"
+        ]
+       }
+      },
+      "required": [
+       "emotion"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "move_head",
+     "description": "Queue a head pose change.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "direction": {
+        "type": "string",
+        "enum": [
+         "left",
+         "right",
+         "up",
+         "down",
+         "front"
+        ]
+       }
+      },
+      "required": [
+       "direction"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "head_tracking",
+     "description": "Follow the user's face with the head, or stop following.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "enabled": {
+        "type": "boolean"
+       }
+      },
+      "required": [
+       "enabled"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "sweep_look",
+     "description": "Sweep the head left, right, and back to center.",
+     "parameters": {
+      "type": "object",
+      "properties": {},
+      "required": []
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "stop_dance",
+     "description": "Clear queued dances.",
+     "parameters": {
+      "type": "object",
+      "properties": {},
+      "required": []
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "stop_emotion",
+     "description": "Clear queued emotions.",
+     "parameters": {
+      "type": "object",
+      "properties": {},
+      "required": []
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "go_to_sleep",
+     "description": "Run the sleep movement and stop the app after an explicit user request.",
+     "parameters": {
+      "type": "object",
+      "properties": {},
+      "required": []
+     }
+    }
+   }
+  ],
+  "tool_choice": "auto",
+  "stream": true,
+  "cache_prompt": true,
+  "extra_body_arms": {
+   "xhigh_default": {},
+   "medium": {
+    "chat_template_kwargs": {
+     "enable_thinking": true,
+     "reasoning_effort": "medium"
+    }
+   },
+   "disabled": {
+    "chat_template_kwargs": {
+     "enable_thinking": false
+    }
+   }
+  }
+ },
+ "turns": [
+  {
+   "id": 1,
+   "kind": "simple_answer",
+   "user": "Ciao Richard, come va? Che tempo fa oggi, più o meno?",
+   "expect": "A short spoken answer; weather may be answered from weather.home via get_home_assistant_state or declined; no dance."
+  },
+  {
+   "id": 2,
+   "kind": "clarification",
+   "user": "No, intendevo la luce della cucina, non quella del corridoio: è accesa?",
+   "expect": "Tool call get_home_assistant_state with entity_id light.kitchen.",
+   "tool_result": {
+    "name": "get_home_assistant_state",
+    "content": "light.kitchen: on (brightness 40%), since 2h 14m. CONFIRMED read."
+   }
+  },
+  {
+   "id": 3,
+   "kind": "mock_tool_lookup",
+   "user": "Spegnila, per favore.",
+   "expect": "Tool call call_home_assistant_service light.turn_off on light.kitchen, then a one-sentence confirmation that relays the verified outcome.",
+   "tool_result": {
+    "name": "call_home_assistant_service",
+    "content": "CONFIRMED: light.kitchen is off (read back 0.4 s after the call)."
+   }
+  },
+  {
+   "id": 4,
+   "kind": "remembered_fact",
+   "user": "Ti ricordi cosa devo comprare per la lampada dell'officina?",
+   "expect": "Answer from memory [2]: a 2 m E27 cable; no tool call needed."
+  },
+  {
+   "id": 5,
+   "kind": "action_marker",
+   "user": "Grande! Fai un balletto per festeggiare e poi guardami.",
+   "expect": "Reply text containing [dance:happy_bounce] (or another allowed name) and [track:on] or [look:front]; short spoken sentence around them."
+  }
+ ]
+}
