@@ -329,6 +329,9 @@ def _build_tts(config, write: Callable[[str], None]):
 
         return RemoteTTS(
             config.voice.tts_endpoint, config.voice.tts_voice,
+            model=config.voice.tts_model,
+            language=config.voice.tts_language or None,
+            instructions=config.voice.tts_instructions or None,
             exaggeration=config.voice.tts_exaggeration,
             cfg_weight=config.voice.tts_cfg_weight,
             temperature=config.voice.tts_temperature,

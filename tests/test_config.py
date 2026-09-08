@@ -274,3 +274,27 @@ def test_realtime_and_language_roundtrip(tmp_path):
     assert loaded.realtime.token == "sekrit"
     assert loaded.voice.language == "it"
     assert loaded.voice.endpoint_silence_ms == 300
+
+
+def test_voice_remote_model_language_instructions_defaults():
+    from richard.config import Voice
+
+    v = Voice()
+    assert v.tts_model == "chatterbox"
+    assert v.tts_language == ""
+    assert v.tts_instructions == ""
+
+
+def test_voice_remote_model_language_instructions_roundtrip(tmp_path):
+    from richard.config import Config, load_config, save_config
+
+    path = tmp_path / "config.toml"
+    config = Config()
+    config.voice.tts_model = ""
+    config.voice.tts_language = "Italian"
+    config.voice.tts_instructions = "dry, deadpan, slightly amused"
+    save_config(config, path)
+    loaded = load_config(path)
+    assert loaded.voice.tts_model == ""
+    assert loaded.voice.tts_language == "Italian"
+    assert loaded.voice.tts_instructions == "dry, deadpan, slightly amused"

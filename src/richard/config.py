@@ -45,6 +45,9 @@ class Voice:
     tts_engine: str = "kokoro"  # "kokoro" (natural CPU), "piper" (fast CPU), or "remote" (GPU server)
     tts_voice: str = "bm_lewis"  # kokoro voice id / piper model name / remote voice name
     tts_endpoint: str = ""  # OpenAI-compatible base URL when tts_engine == "remote"
+    tts_model: str = "chatterbox"  # remote: the "model" field; blank = omit it (vLLM-Omni serves one checkpoint)
+    tts_language: str = ""  # remote: "language" field when set (Qwen3-TTS: English, Italian, ... ; blank = server default)
+    tts_instructions: str = ""  # remote: "instructions" field when set (Qwen3-TTS style/emotion control)
     tts_streaming: bool = True  # speak sentence-by-sentence (low latency) vs whole-utterance
     # Chatterbox generation knobs (remote TTS engine only); defaults match the server's.
     tts_exaggeration: float = 0.4  # expressiveness, 0.25–2.0
@@ -184,6 +187,9 @@ def load_config(path: Path | None = None) -> Config:
         tts_engine=v.get("tts_engine", Voice.tts_engine) or Voice.tts_engine,
         tts_voice=v.get("tts_voice", Voice.tts_voice) or Voice.tts_voice,
         tts_endpoint=v.get("tts_endpoint", Voice.tts_endpoint),
+        tts_model=str(v.get("tts_model", Voice.tts_model)),
+        tts_language=str(v.get("tts_language", Voice.tts_language)),
+        tts_instructions=str(v.get("tts_instructions", Voice.tts_instructions)),
         tts_streaming=bool(v.get("tts_streaming", Voice.tts_streaming)),
         tts_exaggeration=float(v.get("tts_exaggeration", Voice.tts_exaggeration)),
         tts_cfg_weight=float(v.get("tts_cfg_weight", Voice.tts_cfg_weight)),
@@ -318,6 +324,9 @@ def save_config(config: Config, path: Path | None = None) -> None:
         "tts_engine": config.voice.tts_engine,
         "tts_voice": config.voice.tts_voice,
         "tts_endpoint": config.voice.tts_endpoint,
+        "tts_model": config.voice.tts_model,
+        "tts_language": config.voice.tts_language,
+        "tts_instructions": config.voice.tts_instructions,
         "tts_streaming": config.voice.tts_streaming,
         "tts_exaggeration": config.voice.tts_exaggeration,
         "tts_cfg_weight": config.voice.tts_cfg_weight,

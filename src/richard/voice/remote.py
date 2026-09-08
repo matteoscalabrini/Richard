@@ -7,7 +7,7 @@ import httpx
 
 
 class RemoteTTS:
-    """TTS via an OpenAI-compatible /v1/audio/speech endpoint (e.g. Chatterbox on the GPU host).
+    """TTS via an OpenAI-compatible /v1/audio/speech endpoint (Chatterbox server or vLLM-Omni/Qwen3-TTS).
 
     Implements the same interface as PiperTTS/KokoroTTS (`synth` + `samplerate`) so it drops
     straight into SpeechPipeline. Needs only httpx — no heavy model deps on the client.
@@ -19,6 +19,8 @@ class RemoteTTS:
         voice: str,
         *,
         model: str = "chatterbox",
+        language: str | None = None,
+        instructions: str | None = None,
         exaggeration: float | None = None,
         cfg_weight: float | None = None,
         temperature: float | None = None,
@@ -29,6 +31,8 @@ class RemoteTTS:
         self._url = endpoint.rstrip("/") + "/v1/audio/speech"
         self._voice = voice
         self._model = model
+        self._language = language
+        self._instructions = instructions
         # Chatterbox generation knobs; only sent when set, else the server's defaults apply.
         self._tuning = {
             "exaggeration": exaggeration,
@@ -44,12 +48,14 @@ class RemoteTTS:
         return self._samplerate
 
     def synth(self, text: str) -> bytes:
-        payload = {
-            "model": self._model,
-            "input": text,
-            "voice": self._voice,
-            "response_format": "wav",
-        }
+        payload = {"input": text, "voice": self._voice, "response_format": "wav"}
+        # Blank model = omit the field: vLLM-Omni serves one checkpoint and 404s on unknown names.
+        if self._model:
+            payload["model"] = self._model
+        if self._language:
+            payload["language"] = self._language
+        if self._instructions:
+            payload["instructions"] = self._instructions
         payload.update({k: v for k, v in self._tuning.items() if v is not None})
         response = self._client.post(self._url, json=payload)
         response.raise_for_status()

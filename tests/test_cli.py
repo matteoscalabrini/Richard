@@ -369,3 +369,30 @@ def test_realtime_session_factory_builds_wired_session():
         assert session.conversation.history() == []
     finally:
         session.close()
+
+
+def test_build_tts_remote_passes_model_language_and_instructions(monkeypatch):
+    import richard.voice.remote as remote_mod
+    from richard.cli import _build_tts
+    from richard.config import Config
+
+    seen = {}
+
+    class FakeRemoteTTS:
+        def __init__(self, endpoint, voice, **kwargs):
+            seen.update(endpoint=endpoint, voice=voice, **kwargs)
+
+    monkeypatch.setattr(remote_mod, "RemoteTTS", FakeRemoteTTS)
+    config = Config()
+    config.voice.tts_engine = "remote"
+    config.voice.tts_endpoint = "http://127.0.0.1:8091"
+    config.voice.tts_voice = "richard"
+    config.voice.tts_model = ""
+    config.voice.tts_language = "Italian"
+    config.voice.tts_instructions = "dry"
+    _build_tts(config, lambda s: None)
+    assert seen["endpoint"] == "http://127.0.0.1:8091"
+    assert seen["voice"] == "richard"
+    assert seen["model"] == ""
+    assert seen["language"] == "Italian"
+    assert seen["instructions"] == "dry"

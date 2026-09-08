@@ -93,3 +93,45 @@ def test_remote_stt_transcribe_file_posts_multipart():
     assert captured["url"].endswith("/v1/audio/transcriptions")
     assert captured["has_body"] is True
     assert text == "hello there"
+
+
+def test_remote_tts_default_model_field_is_chatterbox():
+    captured = {}
+
+    def handler(request):
+        captured["json"] = json.loads(request.content)
+        return httpx.Response(200, content=_wav(b"\x00\x00" * 10, 24000))
+
+    RemoteTTS("http://host:8004", voice="tars", client=_client(handler)).synth("hi")
+    assert captured["json"]["model"] == "chatterbox"
+
+
+def test_remote_tts_omits_model_field_when_blank():
+    """vLLM-Omni serves one checkpoint and 404s on unknown model names; blank = omit."""
+    captured = {}
+
+    def handler(request):
+        captured["json"] = json.loads(request.content)
+        return httpx.Response(200, content=_wav(b"\x00\x00" * 10, 24000))
+
+    RemoteTTS("http://host:8091", voice="richard", model="", client=_client(handler)).synth("hi")
+    assert "model" not in captured["json"]
+
+
+def test_remote_tts_sends_language_and_instructions_only_when_set():
+    captured = {}
+
+    def handler(request):
+        captured["json"] = json.loads(request.content)
+        return httpx.Response(200, content=_wav(b"\x00\x00" * 10, 24000))
+
+    RemoteTTS("http://host:8091", voice="richard", client=_client(handler)).synth("ciao")
+    assert "language" not in captured["json"]
+    assert "instructions" not in captured["json"]
+
+    RemoteTTS(
+        "http://host:8091", voice="richard", client=_client(handler),
+        language="Italian", instructions="dry, deadpan",
+    ).synth("ciao")
+    assert captured["json"]["language"] == "Italian"
+    assert captured["json"]["instructions"] == "dry, deadpan"
