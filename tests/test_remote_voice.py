@@ -150,3 +150,21 @@ def test_remote_tts_sends_x_vector_only_mode_only_when_enabled():
 
     RemoteTTS("http://host:8091", voice="richard", x_vector_only=True, client=_client(handler)).synth("ciao")
     assert captured["json"]["x_vector_only_mode"] is True
+
+
+def test_remote_tts_sends_task_type_when_set_and_base_when_xvec_only():
+    """vLLM-Omni rejects x_vector_only_mode unless task_type is Base (400)."""
+    captured = {}
+
+    def handler(request):
+        captured["json"] = json.loads(request.content)
+        return httpx.Response(200, content=_wav(b"\x00\x00" * 10, 24000))
+
+    RemoteTTS("http://host:8091", voice="richard", client=_client(handler)).synth("ciao")
+    assert "task_type" not in captured["json"]
+
+    RemoteTTS("http://host:8091", voice="richard", task_type="CustomVoice", client=_client(handler)).synth("ciao")
+    assert captured["json"]["task_type"] == "CustomVoice"
+
+    RemoteTTS("http://host:8091", voice="richard", x_vector_only=True, client=_client(handler)).synth("ciao")
+    assert captured["json"]["task_type"] == "Base"

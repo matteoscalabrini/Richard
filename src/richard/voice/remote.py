@@ -22,6 +22,7 @@ class RemoteTTS:
         language: str | None = None,
         instructions: str | None = None,
         x_vector_only: bool = False,
+        task_type: str | None = None,
         exaggeration: float | None = None,
         cfg_weight: float | None = None,
         temperature: float | None = None,
@@ -35,6 +36,8 @@ class RemoteTTS:
         self._language = language
         self._instructions = instructions
         self._x_vector_only = x_vector_only
+        # x-vector-only is a Base-task feature; imply Base unless the caller says otherwise.
+        self._task_type = task_type or ("Base" if x_vector_only else None)
         # Chatterbox generation knobs; only sent when set, else the server's defaults apply.
         self._tuning = {
             "exaggeration": exaggeration,
@@ -58,6 +61,8 @@ class RemoteTTS:
             payload["language"] = self._language
         if self._instructions:
             payload["instructions"] = self._instructions
+        if self._task_type:
+            payload["task_type"] = self._task_type
         if self._x_vector_only:
             # Qwen3-TTS Base: timbre from the speaker embedding only, no in-context
             # imitation of the reference clip (keeps the voice, drops its accent).

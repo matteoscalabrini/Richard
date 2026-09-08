@@ -309,3 +309,14 @@ def test_voice_tts_xvec_only_defaults_false_and_roundtrips(tmp_path):
     config.voice.tts_xvec_only = True
     save_config(config, path)
     assert load_config(path).voice.tts_xvec_only is True
+
+
+def test_voice_tts_task_type_defaults_blank_and_roundtrips(tmp_path):
+    from richard.config import Config, Voice, load_config, save_config
+
+    assert Voice().tts_task_type == ""
+    path = tmp_path / "config.toml"
+    config = Config()
+    config.voice.tts_task_type = "Base"
+    save_config(config, path)
+    assert load_config(path).voice.tts_task_type == "Base"

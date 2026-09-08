@@ -49,6 +49,7 @@ class Voice:
     tts_language: str = ""  # remote: "language" field when set (Qwen3-TTS: English, Italian, ... ; blank = server default)
     tts_instructions: str = ""  # remote: "instructions" field when set (Qwen3-TTS style/emotion control)
     tts_xvec_only: bool = False  # remote/Qwen3-TTS Base: x_vector_only_mode (timbre only, native prosody)
+    tts_task_type: str = ""  # remote/Qwen3-TTS: Base | CustomVoice | VoiceDesign; blank = server default
     tts_streaming: bool = True  # speak sentence-by-sentence (low latency) vs whole-utterance
     # Chatterbox generation knobs (remote TTS engine only); defaults match the server's.
     tts_exaggeration: float = 0.4  # expressiveness, 0.25–2.0
@@ -192,6 +193,7 @@ def load_config(path: Path | None = None) -> Config:
         tts_language=str(v.get("tts_language", Voice.tts_language)),
         tts_instructions=str(v.get("tts_instructions", Voice.tts_instructions)),
         tts_xvec_only=bool(v.get("tts_xvec_only", Voice.tts_xvec_only)),
+        tts_task_type=str(v.get("tts_task_type", Voice.tts_task_type)),
         tts_streaming=bool(v.get("tts_streaming", Voice.tts_streaming)),
         tts_exaggeration=float(v.get("tts_exaggeration", Voice.tts_exaggeration)),
         tts_cfg_weight=float(v.get("tts_cfg_weight", Voice.tts_cfg_weight)),
@@ -330,6 +332,7 @@ def save_config(config: Config, path: Path | None = None) -> None:
         "tts_language": config.voice.tts_language,
         "tts_instructions": config.voice.tts_instructions,
         "tts_xvec_only": config.voice.tts_xvec_only,
+        "tts_task_type": config.voice.tts_task_type,
         "tts_streaming": config.voice.tts_streaming,
         "tts_exaggeration": config.voice.tts_exaggeration,
         "tts_cfg_weight": config.voice.tts_cfg_weight,
