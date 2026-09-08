@@ -21,6 +21,7 @@ class RemoteTTS:
         model: str = "chatterbox",
         language: str | None = None,
         instructions: str | None = None,
+        x_vector_only: bool = False,
         exaggeration: float | None = None,
         cfg_weight: float | None = None,
         temperature: float | None = None,
@@ -33,6 +34,7 @@ class RemoteTTS:
         self._model = model
         self._language = language
         self._instructions = instructions
+        self._x_vector_only = x_vector_only
         # Chatterbox generation knobs; only sent when set, else the server's defaults apply.
         self._tuning = {
             "exaggeration": exaggeration,
@@ -56,6 +58,10 @@ class RemoteTTS:
             payload["language"] = self._language
         if self._instructions:
             payload["instructions"] = self._instructions
+        if self._x_vector_only:
+            # Qwen3-TTS Base: timbre from the speaker embedding only, no in-context
+            # imitation of the reference clip (keeps the voice, drops its accent).
+            payload["x_vector_only_mode"] = True
         payload.update({k: v for k, v in self._tuning.items() if v is not None})
         response = self._client.post(self._url, json=payload)
         response.raise_for_status()

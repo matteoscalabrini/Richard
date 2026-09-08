@@ -298,3 +298,14 @@ def test_voice_remote_model_language_instructions_roundtrip(tmp_path):
     assert loaded.voice.tts_model == ""
     assert loaded.voice.tts_language == "Italian"
     assert loaded.voice.tts_instructions == "dry, deadpan, slightly amused"
+
+
+def test_voice_tts_xvec_only_defaults_false_and_roundtrips(tmp_path):
+    from richard.config import Config, Voice, load_config, save_config
+
+    assert Voice().tts_xvec_only is False
+    path = tmp_path / "config.toml"
+    config = Config()
+    config.voice.tts_xvec_only = True
+    save_config(config, path)
+    assert load_config(path).voice.tts_xvec_only is True

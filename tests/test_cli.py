@@ -396,3 +396,23 @@ def test_build_tts_remote_passes_model_language_and_instructions(monkeypatch):
     assert seen["model"] == ""
     assert seen["language"] == "Italian"
     assert seen["instructions"] == "dry"
+
+
+def test_build_tts_remote_passes_x_vector_only(monkeypatch):
+    import richard.voice.remote as remote_mod
+    from richard.cli import _build_tts
+    from richard.config import Config
+
+    seen = {}
+
+    class FakeRemoteTTS:
+        def __init__(self, endpoint, voice, **kwargs):
+            seen.update(kwargs)
+
+    monkeypatch.setattr(remote_mod, "RemoteTTS", FakeRemoteTTS)
+    config = Config()
+    config.voice.tts_engine = "remote"
+    config.voice.tts_endpoint = "http://127.0.0.1:8091"
+    config.voice.tts_xvec_only = True
+    _build_tts(config, lambda s: None)
+    assert seen["x_vector_only"] is True
