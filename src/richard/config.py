@@ -35,6 +35,7 @@ class BrainRole:
     model: str = ""
     api_key: str | None = None
     timeout: float | None = None
+    extra_body: dict | None = None  # request-body knobs merged verbatim (e.g. chat_template_kwargs)
 
 
 @dataclass
@@ -130,6 +131,7 @@ class Config:
     llm_model: str = "local"
     llm_api_key: str | None = None
     llm_timeout: float = 180.0
+    llm_extra_body: dict = field(default_factory=dict)  # [llm_extra_body] table
     personality: Personality = field(default_factory=Personality)
     voice: Voice = field(default_factory=Voice)
     home_assistant: HomeAssistant = field(default_factory=HomeAssistant)
@@ -160,6 +162,7 @@ def resolve_brain_role(config: Config, role: str) -> BrainRole:
         model=pick("model", config.llm_model),
         api_key=pick("api_key", config.llm_api_key),
         timeout=pick("timeout", config.llm_timeout),
+        extra_body=pick("extra_body", config.llm_extra_body) or None,
     )
 
 
@@ -250,12 +253,14 @@ def load_config(path: Path | None = None) -> Config:
             model=str(table.get("model", "")),
             api_key=table.get("api_key"),
             timeout=float(table["timeout"]) if "timeout" in table else None,
+            extra_body=dict(table["extra_body"]) if isinstance(table.get("extra_body"), dict) else None,
         )
     config = Config(
         llm_endpoint=data.get("llm_endpoint", Config.llm_endpoint),
         llm_model=data.get("llm_model", Config.llm_model),
         llm_api_key=data.get("llm_api_key", Config.llm_api_key),
         llm_timeout=float(data.get("llm_timeout", Config.llm_timeout)),
+        llm_extra_body=dict(data.get("llm_extra_body") or {}),
         personality=personality,
         voice=voice,
         home_assistant=home_assistant,
@@ -313,6 +318,8 @@ def save_config(config: Config, path: Path | None = None) -> None:
     }
     if config.llm_api_key is not None:
         data["llm_api_key"] = config.llm_api_key
+    if config.llm_extra_body:
+        data["llm_extra_body"] = config.llm_extra_body
     data["personality"] = {
         "name": config.personality.name,
         "humour": config.personality.humour,
@@ -392,6 +399,8 @@ def save_config(config: Config, path: Path | None = None) -> None:
                 entry["api_key"] = role.api_key
             if role.timeout is not None:
                 entry["timeout"] = role.timeout
+            if role.extra_body:
+                entry["extra_body"] = role.extra_body
             brains_table[role_name] = entry
         data["brains"] = brains_table
     with path.open("wb") as f:

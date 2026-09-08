@@ -31,6 +31,7 @@ class LlamaCppBrain:
         api_key: str | None = None,
         client: httpx.Client | None = None,
         timeout: float = 180.0,
+        extra_body: dict | None = None,
     ) -> None:
         base = endpoint.rstrip("/")
         if base.endswith("/v1"):
@@ -39,11 +40,14 @@ class LlamaCppBrain:
         self._model = model
         self._api_key = api_key
         self._client = client or httpx.Client(timeout=timeout)
+        # Server-specific knobs merged into every request body verbatim (e.g. the thinking
+        # controls a llama.cpp/SGLang chat template accepts). Required keys always win.
+        self._extra_body = dict(extra_body or {})
 
     def complete(self, messages: list[dict], tools: list[dict] | None = None) -> Completion:
         # cache_prompt: llama.cpp reuses the prompt KV cache across turns — the system
         # prompt + history prefix is identical every turn, so this cuts TTFT sharply.
-        payload: dict = {"model": self._model, "messages": messages, "cache_prompt": True}
+        payload: dict = {**self._extra_body, "model": self._model, "messages": messages, "cache_prompt": True}
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
@@ -75,7 +79,7 @@ class LlamaCppBrain:
     def stream(
         self, messages: list[dict], tools: list[dict] | None = None
     ) -> Iterator[StreamEvent]:
-        payload: dict = {"model": self._model, "messages": messages, "stream": True, "cache_prompt": True}
+        payload: dict = {**self._extra_body, "model": self._model, "messages": messages, "stream": True, "cache_prompt": True}
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"

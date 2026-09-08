@@ -436,3 +436,20 @@ def test_build_tts_remote_passes_task_type(monkeypatch):
     config.voice.tts_task_type = "Base"
     _build_tts(config, lambda s: None)
     assert seen["task_type"] == "Base"
+
+
+def test_build_brain_passes_resolved_extra_body(monkeypatch):
+    import richard.cli as cli_mod
+    from richard.config import Config
+
+    seen = {}
+
+    class FakeBrain:
+        def __init__(self, endpoint, model, api_key=None, **kwargs):
+            seen.update(endpoint=endpoint, model=model, **kwargs)
+
+    monkeypatch.setattr(cli_mod, "LlamaCppBrain", FakeBrain)
+    config = Config()
+    config.llm_extra_body = {"chat_template_kwargs": {"enable_thinking": False}}
+    cli_mod._build_brain(config)
+    assert seen["extra_body"] == {"chat_template_kwargs": {"enable_thinking": False}}

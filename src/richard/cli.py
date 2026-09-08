@@ -24,7 +24,8 @@ def _build_brain(config, role: str = "conversational") -> LlamaCppBrain:
 
     resolved = resolve_brain_role(config, role)
     return LlamaCppBrain(
-        resolved.endpoint, resolved.model, resolved.api_key, timeout=resolved.timeout
+        resolved.endpoint, resolved.model, resolved.api_key, timeout=resolved.timeout,
+        extra_body=resolved.extra_body,
     )
 
 

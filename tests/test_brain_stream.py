@@ -89,3 +89,24 @@ def test_stream_wraps_http_error_status():
 
     with pytest.raises(BrainUnreachable):
         list(_brain(handler).stream([{"role": "user", "content": "hi"}]))
+
+
+def test_extra_body_is_merged_into_stream_and_complete_payloads():
+    """Per-role extra_body carries server knobs (e.g. chat_template_kwargs) verbatim."""
+    seen = []
+
+    def handler(request):
+        seen.append(json.loads(request.content))
+        if seen[-1].get("stream"):
+            return httpx.Response(200, content=_sse({"choices": [{"delta": {"content": "ok"}}]}))
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    extra = {"chat_template_kwargs": {"enable_thinking": True, "reasoning_effort": "medium"},
+             "messages": "must not override"}
+    brain = LlamaCppBrain("http://x", "m", extra_body=extra,
+                          client=httpx.Client(transport=httpx.MockTransport(handler)))
+    list(brain.stream([{"role": "user", "content": "hi"}]))
+    brain.complete([{"role": "user", "content": "hi"}])
+    for payload in seen:
+        assert payload["chat_template_kwargs"] == {"enable_thinking": True, "reasoning_effort": "medium"}
+        assert payload["messages"] == [{"role": "user", "content": "hi"}]

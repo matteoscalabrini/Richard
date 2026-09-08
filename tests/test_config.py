@@ -320,3 +320,21 @@ def test_voice_tts_task_type_defaults_blank_and_roundtrips(tmp_path):
     config.voice.tts_task_type = "Base"
     save_config(config, path)
     assert load_config(path).voice.tts_task_type == "Base"
+
+
+def test_llm_extra_body_roundtrip_and_role_fallback(tmp_path):
+    from richard.config import BrainRole, Config, load_config, resolve_brain_role, save_config
+
+    assert Config().llm_extra_body == {}
+    assert BrainRole().extra_body is None
+    path = tmp_path / "config.toml"
+    config = Config()
+    config.llm_extra_body = {"chat_template_kwargs": {"enable_thinking": False}}
+    config.brains["voice"] = BrainRole(extra_body={"chat_template_kwargs": {"reasoning_effort": "medium"}})
+    config.brains["curator"] = BrainRole(model="small")
+    save_config(config, path)
+    loaded = load_config(path)
+    assert loaded.llm_extra_body == {"chat_template_kwargs": {"enable_thinking": False}}
+    assert resolve_brain_role(loaded, "voice").extra_body == {"chat_template_kwargs": {"reasoning_effort": "medium"}}
+    # a role without its own extra_body inherits the top-level one
+    assert resolve_brain_role(loaded, "curator").extra_body == {"chat_template_kwargs": {"enable_thinking": False}}
