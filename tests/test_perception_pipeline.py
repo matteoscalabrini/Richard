@@ -141,3 +141,51 @@ def test_enrol_uses_the_identifier_and_the_gallery(tmp_path):
                             person_detector=ScriptedPersons([[]]), identifier=Enroller())
     assert svc.enrol("matteo", [_jpeg((1, 2, 3)), _jpeg((3, 2, 1))]) == 2
     assert [p["name"] for p in svc.gallery.list()] == ["matteo"]
+
+
+def test_enrol_from_live_collects_frames_from_the_live_source(tmp_path):
+    class Enroller:
+        def __init__(self):
+            self.embedded = 0
+
+        def identify(self, rgb):
+            return [FaceMatch(box=(0.1, 0.1, 0.5, 0.5), name=None, score=0.0)]
+
+        def embed_box(self, rgb, box):
+            self.embedded += 1
+            v = np.zeros(512, dtype=np.float32); v[self.embedded % 512] = 1.0
+            return v
+
+    clock = Clock()
+    enroller = Enroller()
+    svc = PerceptionService(Settings.from_table({"identity_enabled": True}), data_dir=tmp_path, clock=clock,
+                            person_detector=ScriptedPersons([[]]), identifier=enroller)
+    with pytest.raises(ValueError, match="No camera"):
+        svc.enrol_from_live("matteo", frames=3, spacing_s=0.0)
+
+    pushed = iter(range(10))
+
+    def sleeper(seconds):  # the service waits for a fresh frame between snapshots
+        clock.t += 0.5
+        svc.push_frame("browser", _jpeg((next(pushed), 0, 0)))
+
+    svc.push_frame("browser", _jpeg((0, 0, 0)))
+    assert svc.enrol_from_live("matteo", frames=3, spacing_s=0.5, sleep=sleeper) == 3
+    assert enroller.embedded == 3
+    assert [p["name"] for p in svc.gallery.list()] == ["matteo"]
+    assert svc.forget_face("matteo") is True and svc.gallery.list() == []
+
+
+def test_enrol_from_live_needs_exactly_one_face(tmp_path):
+    class NoFace:
+        def identify(self, rgb):
+            return []
+
+        def embed_box(self, rgb, box):
+            raise AssertionError("must not embed")
+
+    svc = PerceptionService(Settings.from_table({"identity_enabled": True}), data_dir=tmp_path,
+                            person_detector=ScriptedPersons([[]]), identifier=NoFace())
+    svc.push_frame("browser", _jpeg((0, 0, 0)))
+    with pytest.raises(ValueError, match="exactly one face"):
+        svc.enrol_from_live("matteo", frames=2, spacing_s=0.0, sleep=lambda s: None)

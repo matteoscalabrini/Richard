@@ -17,7 +17,11 @@ Richard watches continuously and speaks rarely. Three stages:
    stillness only ride along as context. Richard can look himself with
    `camera(question, detail, region)`: low = 800 px, high = the source's native frame,
    region = a crop at native resolution (`left|right|centre|top|bottom` or `x0,y0,x1,y1`).
-   `who_is_here` and `last_seen(name)` answer from the presence log.
+   `who_is_here` and `last_seen(name)` answer from the presence log. Names are learned in
+   conversation: when the person in view has said who they are (or you introduced them),
+   Richard calls `enrol_face(name)`, which takes three live snapshots and stores only the
+   embeddings; `forget_face(name)` deletes them for good. The Perception page's enrol button
+   is the manual fallback. Recognition itself stays opt-in (`identity_enabled`).
 
 Enable: `richard plugins enable perception`, install the extra
 (`pip install "richard-companion[perception]"`), restart, open the web UI's Perception page

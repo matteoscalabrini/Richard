@@ -53,7 +53,7 @@ def test_plugin_builds_parts_with_injected_detectors(tmp_path):
                         data_dir=tmp_path / "perception", write=lambda s: None)
     parts = plugin.build(ctx)
     names = [s["function"]["name"] for p in parts.providers for s in p.schemas()]
-    assert names == ["who_is_here", "last_seen"]  # camera withheld: no live source yet
+    assert names == ["who_is_here", "last_seen", "enrol_face", "forget_face"]  # camera withheld: no live source yet
     assert "perception" in parts.target_readers and len(parts.event_sources) == 1
     assert "perception" in parts.context.lower()
     assert plugin.service.settings.sensitivity == 70 and plugin.service.started is True

@@ -308,3 +308,35 @@ class PerceptionService:
                 raise ValueError(f"expected exactly one face per snapshot, found {len(faces)}")
             vectors.append(self._identifier.embed_box(rgb, faces[0].box))
         return self.gallery.enrol(name, vectors)
+
+    def enrol_from_live(self, name: str, *, frames: int = 3, spacing_s: float = 0.7, sleep=time.sleep) -> int:
+        """Enrol the one face in view right now, from `frames` successive live frames.
+
+        The brain calls this when someone in view has told it their name (the
+        philosophy's autonomous memory with discernment): no button, no photo saved,
+        only embeddings under the name. Raises ValueError with a speakable reason.
+        """
+        if self.gallery is None or self._identifier is None:
+            raise ValueError("recognition is off; enable it in the Perception settings first")
+        source_id = next(iter(self.live_sources()), None)
+        if source_id is None:
+            raise ValueError("No camera is streaming right now, so I cannot see a face")
+        vectors = []
+        last_ts = None
+        for i in range(frames):
+            if i:
+                sleep(spacing_s)
+            frame = self.hub.latest(source_id)
+            if frame is None or frame.ts == last_ts:
+                continue  # no fresh frame yet; a slow stream just yields fewer samples
+            last_ts = frame.ts
+            faces = self._identifier.identify(frame.rgb)
+            if len(faces) != 1:
+                raise ValueError(f"I can't see exactly one face right now (I see {len(faces)})")
+            vectors.append(self._identifier.embed_box(frame.rgb, faces[0].box))
+        if not vectors:
+            raise ValueError("the camera gave me no fresh frame")
+        return self.gallery.enrol(name, vectors)
+
+    def forget_face(self, name: str) -> bool:
+        return bool(self.gallery is not None and self.gallery.delete(name))

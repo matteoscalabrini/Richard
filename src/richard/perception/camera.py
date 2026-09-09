@@ -37,6 +37,18 @@ WHO_SCHEMA = {"type": "function", "function": {
 LAST_SEEN_SCHEMA = {"type": "function", "function": {
     "name": "last_seen", "description": "When a named person was last seen by the camera.",
     "parameters": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}}}
+ENROL_SCHEMA = {"type": "function", "function": {
+    "name": "enrol_face",
+    "description": (
+        "Learn the face of the one person in view under a name, so you recognise them from now on. "
+        "Use it only when that person has told you their name, or someone you trust has introduced "
+        "them; never guess a name. Takes three snapshots over a couple of seconds."),
+    "parameters": {"type": "object", "properties": {"name": {"type": "string", "description": "The person's name."}},
+                   "required": ["name"]}}}
+FORGET_SCHEMA = {"type": "function", "function": {
+    "name": "forget_face",
+    "description": "Stop recognising a person: delete their enrolled face for good (when asked to forget them).",
+    "parameters": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}}}
 
 
 class CameraProvider:
@@ -71,9 +83,25 @@ class PresenceProvider:
         self._service = service
 
     def schemas(self) -> list[dict]:
-        return [WHO_SCHEMA, LAST_SEEN_SCHEMA]
+        return [WHO_SCHEMA, LAST_SEEN_SCHEMA, ENROL_SCHEMA, FORGET_SCHEMA]
 
     def execute(self, name: str, arguments: dict) -> str:
+        if name == "enrol_face":
+            who = str(arguments.get("name") or "").strip()
+            if not who:
+                return "A name is required to enrol someone."
+            if not getattr(getattr(self._service, "settings", None), "identity_enabled", False):
+                return "Face recognition is off; it has to be enabled in the Perception settings first."
+            try:
+                samples = self._service.enrol_from_live(who)
+            except ValueError as exc:
+                return f"Could not enrol {who}: {exc}."
+            return f"Enrolled {who} from {samples} snapshots; I will recognise them from now on."
+        if name == "forget_face":
+            who = str(arguments.get("name") or "").strip()
+            if who and self._service.forget_face(who):
+                return f"Forgotten: {who} is no longer recognised."
+            return f"{who or 'That person'} is not enrolled."
         if name == "who_is_here":
             present = self._service.presence()
             if not present:

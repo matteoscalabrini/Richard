@@ -56,10 +56,40 @@ def test_camera_execute_reports_no_frame_and_bad_region_as_text():
 
 def test_presence_tools():
     p = PresenceProvider(FakeService())
-    assert [s["function"]["name"] for s in p.schemas()] == ["who_is_here", "last_seen"]
+    assert [s["function"]["name"] for s in p.schemas()] == ["who_is_here", "last_seen", "enrol_face", "forget_face"]
     assert p.execute("who_is_here", {}) == "Present now: matteo (browser)."
     assert "matteo" in p.execute("last_seen", {"name": "matteo"}) and "2026-09-09" in p.execute("last_seen", {"name": "matteo"})
     assert "never" in p.execute("last_seen", {"name": "ghost"}).lower()
     svc = FakeService()
     svc._presence = []
     assert PresenceProvider(svc).execute("who_is_here", {}) == "Nobody is in view right now."
+
+
+def test_enrol_and_forget_face_tools():
+    class Svc(FakeService):
+        def __init__(self):
+            super().__init__()
+            self.enrolled = []
+            self.settings = type("S", (), {"identity_enabled": True})()
+
+        def enrol_from_live(self, name, **kw):
+            if name == "ghost":
+                raise ValueError("I can't see exactly one face right now")
+            self.enrolled.append(name)
+            return 3
+
+        def forget_face(self, name):
+            return name == "matteo"
+
+    svc = Svc()
+    p = PresenceProvider(svc)
+    names = [s["function"]["name"] for s in p.schemas()]
+    assert names == ["who_is_here", "last_seen", "enrol_face", "forget_face"]
+    assert "told you their name" in next(s for s in p.schemas() if s["function"]["name"] == "enrol_face")["function"]["description"]
+    assert p.execute("enrol_face", {"name": "Matteo"}) == "Enrolled Matteo from 3 snapshots; I will recognise them from now on."
+    assert "exactly one face" in p.execute("enrol_face", {"name": "ghost"})
+    assert p.execute("enrol_face", {"name": ""}) == "A name is required to enrol someone."
+    assert p.execute("forget_face", {"name": "matteo"}) == "Forgotten: matteo is no longer recognised."
+    assert "not enrolled" in p.execute("forget_face", {"name": "nobody"})
+    svc.settings.identity_enabled = False
+    assert "recognition is off" in p.execute("enrol_face", {"name": "Anna"}).lower()
