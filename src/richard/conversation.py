@@ -12,7 +12,9 @@ DEFAULT_SYSTEM_PROMPT = (
 @dataclass(frozen=True)
 class Message:
     role: str
-    content: str | None
+    # A string, or a list of OpenAI content parts ({"type": "text", ...} /
+    # {"type": "image_url", ...}) served to the brain unchanged. Vision enters here.
+    content: str | list[dict] | None
     # A tool round is stored exactly as it was served (assistant tool_calls, then one
     # tool message per call) so the next turn's prompt starts with the byte-identical
     # sequence the model already saw: the box's prompt cache only matches such a prefix.
@@ -27,6 +29,28 @@ class Message:
             message["tool_call_id"] = self.tool_call_id
         return message
 
+    def text(self) -> str:
+        """The message's text: the string content, or the joined text parts."""
+        if isinstance(self.content, str):
+            return self.content
+        if isinstance(self.content, list):
+            return " ".join(
+                p["text"] for p in self.content
+                if isinstance(p, dict) and p.get("type") == "text" and isinstance(p.get("text"), str)
+            ).strip()
+        return ""
+
+
+def user_parts(text: str | None, image_urls: list[str]) -> list[dict]:
+    """Content parts for a user message: the text part first (when given), then one
+    image part per data URL. This is the only place the part shapes are spelled out."""
+    parts: list[dict] = []
+    if text:
+        parts.append({"type": "text", "text": text})
+    for url in image_urls:
+        parts.append({"type": "image_url", "image_url": {"url": url}})
+    return parts
+
 
 class Conversation:
     def __init__(self, system_prompt: str = DEFAULT_SYSTEM_PROMPT) -> None:
@@ -40,7 +64,7 @@ class Conversation:
         # through the persisted tool result, and the next conversation gets a fresh head.
         self.pinned_head: str | None = None
 
-    def add_user(self, content: str) -> None:
+    def add_user(self, content: str | list[dict]) -> None:
         self._history.append(Message(role="user", content=content))
 
     def add_assistant(self, content: str) -> None:

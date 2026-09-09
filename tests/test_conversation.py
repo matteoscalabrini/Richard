@@ -49,3 +49,36 @@ def test_plain_messages_render_without_tool_fields():
         {"role": "user", "content": "hi"},
         {"role": "assistant", "content": "yo"},
     ]
+
+
+from richard.conversation import user_parts  # noqa: E402
+
+
+IMG = "data:image/jpeg;base64,/9j/4AAQ"
+
+
+def test_user_parts_builds_text_then_images():
+    assert user_parts("what is this?", [IMG]) == [
+        {"type": "text", "text": "what is this?"},
+        {"type": "image_url", "image_url": {"url": IMG}},
+    ]
+    assert user_parts(None, [IMG]) == [{"type": "image_url", "image_url": {"url": IMG}}]
+    assert user_parts("", [IMG]) == [{"type": "image_url", "image_url": {"url": IMG}}]
+
+
+def test_parts_content_passes_through_to_chat_unchanged():
+    convo = Conversation(system_prompt="sys")
+    parts = user_parts("look", [IMG])
+    convo.add_user(parts)
+    convo.add_assistant("A mug.")
+    assert [m.to_chat() for m in convo.history()] == [
+        {"role": "user", "content": parts},
+        {"role": "assistant", "content": "A mug."},
+    ]
+
+
+def test_message_text_joins_text_parts_only():
+    assert Message("user", "plain").text() == "plain"
+    assert Message("user", user_parts("look here", [IMG])).text() == "look here"
+    assert Message("user", user_parts(None, [IMG])).text() == ""
+    assert Message("assistant", None).text() == ""
