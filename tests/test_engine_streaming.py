@@ -283,3 +283,37 @@ def test_without_client_tools_only_strings_are_yielded():
     convo = Conversation()
     convo.add_user("hi")
     assert all(isinstance(x, str) for x in engine.respond_streaming(convo))
+
+
+from richard.providers.base import ToolResult  # noqa: E402
+
+IMG_A = "data:image/jpeg;base64,/9j/AAAA"
+
+
+class CameraProviderFake:
+    def schemas(self):
+        return [{"type": "function", "function": {"name": "camera", "parameters": {}}}]
+
+    def execute(self, name, arguments):
+        return ToolResult(text='{"image_attached": true}', images=(IMG_A,))
+
+    def context(self):
+        return None
+
+
+def test_tool_result_with_images_becomes_tool_message_then_user_image_message():
+    brain = FakeBrain([
+        {"tool_calls": [ToolCall(id="c1", name="camera", arguments={"question": "q"})]},
+        {"deltas": ["A mug."]},
+    ])
+    engine = Engine(brain, [CameraProviderFake()], Personality())
+    convo = Conversation()
+    convo.add_user("look")
+    assert "".join(engine.respond_streaming(convo)) == "A mug."
+    served = brain.calls[1]
+    assert [m["role"] for m in served] == ["system", "user", "assistant", "tool", "user"]
+    assert served[3] == {"role": "tool", "tool_call_id": "c1", "content": '{"image_attached": true}'}
+    assert served[4]["content"] == [{"type": "image_url", "image_url": {"url": IMG_A}}]
+    # the streaming engine leaves the final reply to its caller (the session persists it)
+    assert [m.role for m in convo.history()] == ["user", "assistant", "tool", "user"]
+    assert convo.pending_client_calls() == []

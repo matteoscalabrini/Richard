@@ -8,9 +8,9 @@ from dataclasses import dataclass
 from richard.brain.completion import Completion
 from richard.brain.protocol import Brain
 from richard.config import Personality
-from richard.conversation import Conversation
+from richard.conversation import Conversation, user_parts
 from richard.persona import build_system_prompt
-from richard.providers.base import Provider
+from richard.providers.base import Provider, ToolResult
 
 # Small local models often narrate an action ("I'll turn it off.") and end the turn
 # without calling a tool, forcing the user to say "do it" just to grant another
@@ -107,7 +107,7 @@ class Engine:
         owned = set(self.tool_names())
         return [t for t in (client_tools or []) if t["function"]["name"] not in owned]
 
-    def _execute(self, name: str, arguments: dict) -> str:
+    def _execute(self, name: str, arguments: dict) -> str | ToolResult:
         for provider in self._providers:
             if any(s["function"]["name"] == name for s in provider.schemas()):
                 try:
@@ -134,12 +134,22 @@ class Engine:
         tool_message = _assistant_tool_call_message(completion)
         working.append(tool_message)
         conversation.add_tool_call(tool_message["content"], tool_message["tool_calls"])
+        images: list[str] = []
         for call in completion.tool_calls:
             if call.id in deferred:
                 continue
             result = self._execute(call.name, call.arguments)
-            working.append({"role": "tool", "tool_call_id": call.id, "content": result})
-            conversation.add_tool_result(call.id, result)
+            text = result.text if isinstance(result, ToolResult) else result
+            if isinstance(result, ToolResult):
+                images.extend(result.images)
+            working.append({"role": "tool", "tool_call_id": call.id, "content": text})
+            conversation.add_tool_result(call.id, text)
+        if images:
+            # Pictures ride as a user message after the round's tool messages: the same
+            # shape the Reachy app produces, so history looks alike whoever took them.
+            parts = user_parts(None, images)
+            working.append({"role": "user", "content": parts})
+            conversation.add_user(parts)
 
     def respond(self, conversation: Conversation) -> str:
         working: list[dict] = [{"role": "system", "content": self._head(conversation)}]

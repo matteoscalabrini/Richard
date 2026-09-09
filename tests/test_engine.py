@@ -279,3 +279,28 @@ def test_system_head_is_pinned_per_conversation_not_per_engine():
     engine.respond(later)
     assert "likes tea" not in brain.calls[1][0][0]["content"]  # same conversation: head unchanged
     assert "likes tea" in brain.calls[2][0][0]["content"]  # new conversation: fresh head
+
+
+def test_respond_handles_tool_results_with_images():
+    from richard.brain.completion import ToolCall
+    from richard.providers.base import ToolResult
+
+    class Cam:
+        def schemas(self):
+            return [{"type": "function", "function": {"name": "camera", "parameters": {}}}]
+
+        def execute(self, name, arguments):
+            return ToolResult(text="ok", images=("data:image/jpeg;base64,/9j/AAAA",))
+
+        def context(self):
+            return None
+
+    brain = FakeBrain([
+        Completion(content=None, tool_calls=[ToolCall(id="1", name="camera", arguments={})]),
+        Completion(content="A mug.", tool_calls=[]),
+    ])
+    engine = Engine(brain, [Cam()], Personality())
+    assert engine.respond(Conversation()) == "A mug."
+    served = brain.calls[1][0]
+    assert [m["role"] for m in served] == ["system", "assistant", "tool", "user"]
+    assert served[3]["content"][0]["type"] == "image_url"
