@@ -1068,6 +1068,8 @@ async function refreshHomeAssistant(prefix){
   }
 }
 
+function errorText(e){ const m = e && e.message ? e.message : String(e); try { return JSON.parse(m).error || m; } catch (_) { return m; } }
+
 function reflectRemoteOnly(){
   const engine = $('voice.tts_engine');
   const remote = !!engine && engine.value === 'remote';
@@ -1089,7 +1091,7 @@ async function loadVoices(){
     }).join('') : '<div class="empty-message">No voices on the server.</div>';
   } catch (e) {
     options.innerHTML = '';
-    box.innerHTML = '<div class="empty-message">' + esc(e.message) + '</div>';
+    box.innerHTML = '<div class="empty-message">' + esc(errorText(e)) + '</div>';
   }
 }
 
@@ -1137,7 +1139,7 @@ function renderPlugins(rows){
 
 async function loadPlugins(){
   try { renderPlugins((await getJSON('/api/plugins')).plugins); }
-  catch (e) { $('plugins-list').innerHTML = '<div class="empty-message">' + esc(e.message) + '</div>'; }
+  catch (e) { $('plugins-list').innerHTML = '<div class="empty-message">' + esc(errorText(e)) + '</div>'; }
 }
 
 async function togglePlugin(name, enabled){
