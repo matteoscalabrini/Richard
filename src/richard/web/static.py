@@ -95,6 +95,12 @@ SPA_HTML = r"""<!DOCTYPE html>
   .setting-group { display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 0.85rem; }
   .setting-label { font-size: 0.875rem; font-weight: 500; color: var(--text-secondary); display: flex; align-items: center; gap: 0.5rem; }
   .setting-label.spread { justify-content: space-between; }
+  /* Help that belongs to one input: hangs off its left edge, directly under it. */
+  .hint {
+    display: block; font-size: 0.72rem; line-height: 1.4; color: var(--text-secondary);
+    margin: 0; padding: 0.1rem 0 0 0.55rem; border-left: 2px solid #3a3a3a;
+  }
+  .window-content > .hint { margin: -0.45rem 0 0.85rem; }
   .setting-input {
     background-color: var(--surface-light); color: var(--text-primary); border: var(--pixel-border);
     padding: 0.5rem; font-family: "IBM Plex Mono", monospace; font-size: 0.875rem; width: 100%;
@@ -104,7 +110,7 @@ SPA_HTML = r"""<!DOCTYPE html>
   .setting-input.invalid { border-color: var(--error-color); color: var(--error-color); }
   textarea.setting-input { resize: vertical; min-height: 96px; line-height: 1.45; white-space: pre-wrap; }
 
-  .field-row { display: flex; gap: 0.75rem; }
+  .field-row { display: flex; gap: 0.75rem; align-items: flex-start; }
   .field-row .setting-group { flex: 1; }
 
   .button-row { margin-top: 0.5rem; display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
@@ -208,13 +214,15 @@ SPA_HTML = r"""<!DOCTYPE html>
   }
   .menu-icon span {
     display: block; width: 100%; height: 3px; background: currentColor;
-    transform-origin: left center; transition: transform 0.2s ease, opacity 0.2s ease;
+    transform-origin: center; transition: transform 0.2s ease, opacity 0.2s ease;
   }
   .menu-icon:focus-visible { outline: var(--pixel-border); outline-offset: 2px; }
   .menu-icon[aria-expanded="true"] { color: var(--error-color); }
-  .menu-icon[aria-expanded="true"] span:nth-child(1) { transform: translateX(4px) rotate(45deg); }
-  .menu-icon[aria-expanded="true"] span:nth-child(2) { opacity: 0; }
-  .menu-icon[aria-expanded="true"] span:nth-child(3) { transform: translateX(4px) rotate(-45deg); }
+  /* Bars are 3px tall with a 6px gap: one pitch is 9px. Rotating about the centre after
+     moving the outer bars onto the middle one gives an X whose arms cross at their midpoints. */
+  .menu-icon[aria-expanded="true"] span:nth-child(1) { transform: translateY(9px) rotate(45deg); }
+  .menu-icon[aria-expanded="true"] span:nth-child(2) { opacity: 0; transform: scaleX(0); }
+  .menu-icon[aria-expanded="true"] span:nth-child(3) { transform: translateY(-9px) rotate(-45deg); }
   .richard-home {
     min-height: calc(100vh - var(--header-height)); min-height: calc(100dvh - var(--header-height));
     display: grid; place-items: center; position: relative; overflow: hidden;
@@ -283,7 +291,17 @@ SPA_HTML = r"""<!DOCTYPE html>
   }
   .drawer-back:hover, .drawer-back:focus-visible { color: var(--text-primary); outline: none; }
   .drawer-page-body .terminal-section { padding: 0; margin: 0; border: 0; }
-  .drawer-page-body .terminal-header-line { display: none; }
+  .drawer-page-body .terminal-section + .terminal-section {
+    margin-top: 1.4rem; padding-top: 1.15rem; border-top: 1px solid #2e2e2e;
+  }
+  /* Inside the drawer a section keeps its title as a small divider label, not a window bar. */
+  .drawer-page-body .terminal-header-line {
+    display: flex; pointer-events: none; border-bottom: 0; padding: 0; margin: 0 0 0.55rem;
+    font-size: 0.7rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-secondary);
+  }
+  .drawer-page-body .terminal-header-line .terminal-command { color: var(--text-secondary); }
+  .drawer-page-body .window-control { display: none; }
+  .drawer-page-body .terminal-section:only-child .terminal-header-line { display: none; }
   .drawer-page-body .window-content { max-height: none; overflow: visible; }
   .drawer-page-body .window-content.collapsed { max-height: none; }
   .drawer-page-body .lede:first-child { margin-top: 0; }
@@ -534,7 +552,7 @@ SPA_HTML = r"""<!DOCTYPE html>
         <div class="setting-group"><label class="setting-label spread">Humour <span class="dial-value" id="personality.humour.val">—</span></label><input id="personality.humour" type="range" min="0" max="100" class="dial-slider"></div>
         <div class="setting-group"><label class="setting-label spread">Honesty <span class="dial-value" id="personality.honesty.val">—</span></label><input id="personality.honesty" type="range" min="0" max="100" class="dial-slider"></div>
         <div class="setting-group"><label class="setting-label spread">Directness <span class="dial-value" id="personality.directness.val">—</span></label><input id="personality.directness" type="range" min="0" max="100" class="dial-slider"></div>
-        <div class="setting-group"><label class="setting-label">Base character (system prompt)</label><textarea id="personality.system_prompt" class="setting-input" rows="6" placeholder="(default)"></textarea><span class="lede" style="margin:0;">Replaces the built-in TARS base; the dials still apply below it. Blank = default. {name} is substituted. Applies after a reboot.</span></div>
+        <div class="setting-group"><label class="setting-label">Base character (system prompt)</label><textarea id="personality.system_prompt" class="setting-input" rows="6" placeholder="(default)"></textarea><span class="hint">Replaces the built-in TARS base; the dials still apply below it. Blank = default. {name} is substituted. Applies after a reboot.</span></div>
         <div class="button-row"><button class="setting-button" data-save="personality">Save changes</button><div class="status-line" id="personality-status"></div></div>
       </div>
     </div>
@@ -554,7 +572,7 @@ SPA_HTML = r"""<!DOCTYPE html>
         </div>
         <div class="field-row">
           <div class="setting-group"><label class="setting-label">STT endpoint (remote only)</label><input id="voice.stt_endpoint" class="setting-input" placeholder="http://host:8005"></div>
-          <div class="setting-group"><label class="setting-label">Language</label><input id="voice.language" class="setting-input" placeholder="auto"><span class="lede" style="margin:0;">STT hint and TTS voice selection. auto = detect per utterance.</span></div>
+          <div class="setting-group"><label class="setting-label">Language</label><input id="voice.language" class="setting-input" placeholder="auto"><span class="hint">STT hint and TTS voice selection. auto = detect per utterance.</span></div>
         </div>
         <div class="button-row"><button class="setting-button" data-save="voice-stt">Save changes</button><div class="status-line" id="voice-stt-status"></div></div>
       </div>
@@ -576,7 +594,7 @@ SPA_HTML = r"""<!DOCTYPE html>
         <div class="setting-group"><label class="setting-label">TTS endpoint (remote only)</label><input id="voice.tts_endpoint" class="setting-input" placeholder="http://host:8091"></div>
         <div class="setting-group"><div class="checkbox-btn"><input type="checkbox" id="voice.tts_streaming"><label for="voice.tts_streaming">Stream speech sentence-by-sentence</label><span class="checkmark"></span></div></div>
         <div data-remote-only>
-          <div class="setting-group"><label class="setting-label">Qwen3-TTS request (remote only)</label><span class="lede" style="margin:0;">Fields sent to the server. Blank model = omit the field (vLLM-Omni serves one checkpoint).</span></div>
+          <div class="setting-group"><label class="setting-label">Qwen3-TTS request (remote only)</label><span class="hint">Fields sent to the server. Blank model = omit the field (vLLM-Omni serves one checkpoint).</span></div>
           <div class="field-row">
             <div class="setting-group"><label class="setting-label">Model</label><input id="voice.tts_model" class="setting-input" placeholder="(blank)"></div>
             <div class="setting-group"><label class="setting-label">Language</label><input id="voice.tts_language" class="setting-input" placeholder="Italian / English / (server default)"></div>
@@ -641,12 +659,12 @@ SPA_HTML = r"""<!DOCTYPE html>
       </div>
       <div class="window-content" id="voice-turn-content">
         <p class="lede">When Richard decides you have finished speaking.</p>
-        <div class="setting-group"><label class="setting-label">Realtime endpoint silence (ms)</label><input id="voice.endpoint_silence_ms" type="number" min="100" max="3000" step="50" class="setting-input"><span class="lede" style="margin:0;">Trailing silence that ends an utterance on the realtime API (Reachy, browser voice mode).</span></div>
+        <div class="setting-group"><label class="setting-label">Realtime endpoint silence (ms)</label><input id="voice.endpoint_silence_ms" type="number" min="100" max="3000" step="50" class="setting-input"><span class="hint">Trailing silence that ends an utterance on the realtime API (Reachy, browser voice mode).</span></div>
         <div class="field-row">
           <div class="setting-group"><label class="setting-label">VAD aggressiveness (0–3)</label><input id="voice.vad_aggressiveness" type="number" min="0" max="3" class="setting-input"></div>
           <div class="setting-group"><label class="setting-label">Silence (ms)</label><input id="voice.silence_ms" type="number" min="0" class="setting-input"></div>
         </div>
-        <span class="lede" style="margin:0;">VAD and silence apply to satellites and the local voice loop, not to the realtime API.</span>
+        <span class="hint">VAD and silence apply to satellites and the local voice loop, not to the realtime API.</span>
         <div class="button-row"><button class="setting-button" data-save="voice-turn">Save changes</button><div class="status-line" id="voice-turn-status"></div></div>
       </div>
     </div>
@@ -744,11 +762,11 @@ SPA_HTML = r"""<!DOCTYPE html>
             <input id="loop-schedule-once" type="datetime-local" class="setting-input" hidden>
           </div>
         </div>
-        <div class="setting-group"><label class="setting-label">Targets</label><input id="control-loop-targets" class="setting-input" placeholder="Desk Lamp, sensor.kitchen_temperature"><span class="lede" style="margin:0;">Comma-separated Home Assistant entity ids or friendly names. Optional for scheduled loops.</span></div>
+        <div class="setting-group"><label class="setting-label">Targets</label><input id="control-loop-targets" class="setting-input" placeholder="Desk Lamp, sensor.kitchen_temperature"><span class="hint">Comma-separated Home Assistant entity ids or friendly names. Optional for scheduled loops.</span></div>
         <div class="setting-group"><label class="setting-label">Trigger description + action</label><textarea id="control-loop-trigger" class="setting-input" rows="4" placeholder="If the temperature exceeds 30°C while the fan is off, turn the fan on and tell me."></textarea></div>
         <div class="button-row"><button class="setting-button" id="control-loop-add">Create loop</button><button class="setting-button small" id="control-loop-refresh">Refresh</button><div class="status-line" id="control-loop-status"></div></div>
         <div class="entry-list" id="control-loop-list"><div class="empty-message">No control loops.</div></div>
-        <div class="setting-group" style="margin-top:1rem;"><label class="setting-label">Richard event inbox</label><span class="lede" style="margin:0;">LLM responses generated after monitored changes.</span></div>
+        <div class="setting-group" style="margin-top:1rem;"><label class="setting-label">Richard event inbox</label><span class="hint">LLM responses generated after monitored changes.</span></div>
         <div class="entry-list" id="control-notification-list"><div class="empty-message">No control-loop notifications.</div></div>
       </div>
     </div>

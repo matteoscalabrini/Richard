@@ -1216,3 +1216,15 @@ def test_web_ui_use_voice_saves_and_offers_restart(tmp_path):
     assert "await saveSection('voice-tts')" in html
     assert 'id="voice-sample-restart"' in html
     assert "$('voice-sample-restart').addEventListener('click', rebootServe)" in html
+
+
+def test_web_ui_field_hints_dividers_and_symmetric_menu_icon(tmp_path):
+    html = _app(tmp_path).handle("GET", "/").body.decode()
+    assert 'class="lede" style="margin:0;"' not in html
+    assert html.count('class="hint"') >= 7
+    assert ".hint {" in html
+    assert ".drawer-page-body .terminal-section + .terminal-section {" in html
+    assert ".drawer-page-body .terminal-section:only-child .terminal-header-line { display: none; }" in html
+    assert "translateY(9px) rotate(45deg)" in html and "translateY(-9px) rotate(-45deg)" in html
+    assert "translateX(4px)" not in html
+    assert "transform-origin: center" in html
