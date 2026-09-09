@@ -174,15 +174,16 @@ def test_config_sets_home_assistant_fields(tmp_path, monkeypatch):
     assert ha.token == "secret"
     assert ha.timeout == 20.0
     assert ha.verify_ssl is False
+    assert load_config(path).plugins.enabled == ["home_assistant"]
 
 
 def test_home_assistant_provider_requires_enabled_complete_config():
     from richard import cli
-    from richard.config import Config
+    from richard.config import Config, HomeAssistant
 
     cfg = Config()
     assert cli._build_home_assistant_provider(cfg, write=lambda s: None) is None
-    cfg.home_assistant.enabled = True
+    cfg.set_home_assistant(HomeAssistant(enabled=True))
     messages = []
     assert cli._build_home_assistant_provider(cfg, write=messages.append) is None
     assert "host or token is unset" in messages[0]
@@ -190,12 +191,11 @@ def test_home_assistant_provider_requires_enabled_complete_config():
 
 def test_home_assistant_provider_builds_when_configured():
     from richard import cli
-    from richard.config import Config
+    from richard.config import Config, HomeAssistant
     from richard.plugins.home_assistant.provider import HomeAssistantProvider
 
     cfg = Config()
-    cfg.home_assistant.enabled = True
-    cfg.home_assistant.token = "secret"
+    cfg.set_home_assistant(HomeAssistant(enabled=True, token="secret"))
     provider = cli._build_home_assistant_provider(cfg, write=lambda s: None)
     assert isinstance(provider, HomeAssistantProvider)
 

@@ -177,29 +177,34 @@ def _run_config(args: argparse.Namespace, write: Callable[[str], None] = print) 
     if args.set_web_port is not None:
         config.web.port = args.set_web_port
         changed = True
+    ha = config.home_assistant
+    ha_changed = False
     if args.set_ha_enabled:
-        config.home_assistant.enabled = args.set_ha_enabled == "on"
-        changed = True
+        ha.enabled = args.set_ha_enabled == "on"
+        ha_changed = True
     if args.set_ha_url is not None:
-        apply_home_assistant_url(config.home_assistant, args.set_ha_url)
-        changed = True
+        apply_home_assistant_url(ha, args.set_ha_url)
+        ha_changed = True
     if args.set_ha_host is not None:
-        config.home_assistant.host = args.set_ha_host.strip()
-        changed = True
+        ha.host = args.set_ha_host.strip()
+        ha_changed = True
     if args.set_ha_port is not None:
-        config.home_assistant.port = max(1, min(65535, args.set_ha_port))
-        changed = True
+        ha.port = max(1, min(65535, args.set_ha_port))
+        ha_changed = True
     if args.set_ha_https:
-        config.home_assistant.use_https = args.set_ha_https == "on"
-        changed = True
+        ha.use_https = args.set_ha_https == "on"
+        ha_changed = True
     if args.set_ha_token is not None:
-        config.home_assistant.token = args.set_ha_token or None
-        changed = True
+        ha.token = args.set_ha_token or None
+        ha_changed = True
     if args.set_ha_timeout is not None:
-        config.home_assistant.timeout = max(1.0, min(300.0, args.set_ha_timeout))
-        changed = True
+        ha.timeout = max(1.0, min(300.0, args.set_ha_timeout))
+        ha_changed = True
     if args.set_ha_verify_ssl:
-        config.home_assistant.verify_ssl = args.set_ha_verify_ssl == "on"
+        ha.verify_ssl = args.set_ha_verify_ssl == "on"
+        ha_changed = True
+    if ha_changed:
+        config.set_home_assistant(ha)
         changed = True
     if changed:
         save_config(config)

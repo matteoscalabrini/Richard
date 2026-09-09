@@ -176,12 +176,26 @@ class Config:
     llm_extra_body: dict = field(default_factory=dict)  # [llm_extra_body] table
     personality: Personality = field(default_factory=Personality)
     voice: Voice = field(default_factory=Voice)
-    home_assistant: HomeAssistant = field(default_factory=HomeAssistant)
     satellite: Satellite = field(default_factory=Satellite)
     web: Web = field(default_factory=Web)
     realtime: Realtime = field(default_factory=Realtime)
     brains: dict[str, BrainRole] = field(default_factory=dict)
     plugins: Plugins = field(default_factory=Plugins)
+
+    @property
+    def home_assistant(self) -> HomeAssistant:
+        """Typed view of [plugins.home_assistant]; mutate through set_home_assistant()."""
+        return HomeAssistant.from_table(
+            self.plugins.tables.get("home_assistant", {}),
+            enabled="home_assistant" in self.plugins.enabled,
+        )
+
+    def set_home_assistant(self, settings: HomeAssistant) -> None:
+        self.plugins.tables["home_assistant"] = settings.to_table()
+        enabled = [name for name in self.plugins.enabled if name != "home_assistant"]
+        if settings.enabled:
+            enabled.append("home_assistant")
+        self.plugins.enabled = enabled
 
 
 def resolve_brain_role(config: Config, role: str) -> BrainRole:
@@ -207,6 +221,9 @@ def resolve_brain_role(config: Config, role: str) -> BrainRole:
         timeout=pick("timeout", config.llm_timeout),
         extra_body=pick("extra_body", config.llm_extra_body) or None,
     )
+
+
+_TRUTHY = {"1", "true", "yes", "on"}
 
 
 def default_config_path() -> Path:
@@ -257,19 +274,6 @@ def load_config(path: Path | None = None) -> Config:
         language=v.get("language", Voice.language) or Voice.language,
         endpoint_silence_ms=int(v.get("endpoint_silence_ms", Voice.endpoint_silence_ms)),
     )
-    h = data.get("home_assistant", {})
-    home_assistant = HomeAssistant(
-        enabled=bool(h.get("enabled", HomeAssistant.enabled)),
-        host=h.get("host", HomeAssistant.host) or HomeAssistant.host,
-        port=int(h.get("port", HomeAssistant.port)),
-        use_https=bool(h.get("use_https", HomeAssistant.use_https)),
-        token=h.get("token", HomeAssistant.token),
-        timeout=float(h.get("timeout", HomeAssistant.timeout)),
-        verify_ssl=bool(h.get("verify_ssl", HomeAssistant.verify_ssl)),
-    )
-    # Read configs written by the initial URL-based implementation.
-    if "host" not in h and h.get("url"):
-        apply_home_assistant_url(home_assistant, str(h["url"]))
     s = data.get("satellite", {})
     satellite = Satellite(
         enabled=bool(s.get("enabled", Satellite.enabled)),
@@ -311,6 +315,14 @@ def load_config(path: Path | None = None) -> Config:
             if isinstance(table, dict)
         },
     )
+    # A [home_assistant] table from before plugins becomes [plugins.home_assistant];
+    # save_config no longer writes the old table.
+    legacy = data.get("home_assistant")
+    if isinstance(legacy, dict) and "home_assistant" not in plugins.tables:
+        settings = HomeAssistant.from_table(legacy, enabled=bool(legacy.get("enabled", False)))
+        plugins.tables["home_assistant"] = settings.to_table()
+        if settings.enabled and "home_assistant" not in plugins.enabled:
+            plugins.enabled.append("home_assistant")
     config = Config(
         llm_endpoint=data.get("llm_endpoint", Config.llm_endpoint),
         llm_model=data.get("llm_model", Config.llm_model),
@@ -319,7 +331,6 @@ def load_config(path: Path | None = None) -> Config:
         llm_extra_body=dict(data.get("llm_extra_body") or {}),
         personality=personality,
         voice=voice,
-        home_assistant=home_assistant,
         satellite=satellite,
         web=web,
         realtime=realtime,
@@ -336,31 +347,25 @@ def load_config(path: Path | None = None) -> Config:
             config.llm_timeout = float(env_timeout)
         except ValueError:
             pass
-    env_ha_url = os.environ.get("RICHARD_HA_URL")
-    if env_ha_url:
-        apply_home_assistant_url(config.home_assistant, env_ha_url)
-    config.home_assistant.host = os.environ.get(
-        "RICHARD_HA_HOST", config.home_assistant.host
-    )
-    env_ha_port = os.environ.get("RICHARD_HA_PORT")
-    if env_ha_port:
-        try:
-            config.home_assistant.port = int(env_ha_port)
-        except ValueError:
-            pass
-    config.home_assistant.token = os.environ.get(
-        "RICHARD_HA_TOKEN", config.home_assistant.token
-    )
-    env_ha_enabled = os.environ.get("RICHARD_HA_ENABLED")
-    if env_ha_enabled:
-        config.home_assistant.enabled = env_ha_enabled.strip().lower() in {
-            "1", "true", "yes", "on"
-        }
-    env_ha_https = os.environ.get("RICHARD_HA_HTTPS")
-    if env_ha_https:
-        config.home_assistant.use_https = env_ha_https.strip().lower() in {
-            "1", "true", "yes", "on"
-        }
+    ha_vars = {k: v for k, v in os.environ.items() if k.startswith("RICHARD_HA_")}
+    if ha_vars:
+        settings = config.home_assistant
+        if "RICHARD_HA_URL" in ha_vars:
+            apply_home_assistant_url(settings, ha_vars["RICHARD_HA_URL"])
+        if "RICHARD_HA_HOST" in ha_vars:
+            settings.host = ha_vars["RICHARD_HA_HOST"]
+        if "RICHARD_HA_PORT" in ha_vars:
+            try:
+                settings.port = int(ha_vars["RICHARD_HA_PORT"])
+            except ValueError:
+                pass
+        if "RICHARD_HA_TOKEN" in ha_vars:
+            settings.token = ha_vars["RICHARD_HA_TOKEN"]
+        if "RICHARD_HA_HTTPS" in ha_vars:
+            settings.use_https = ha_vars["RICHARD_HA_HTTPS"].strip().lower() in _TRUTHY
+        if "RICHARD_HA_ENABLED" in ha_vars:
+            settings.enabled = ha_vars["RICHARD_HA_ENABLED"].strip().lower() in _TRUTHY
+        config.set_home_assistant(settings)
     return config
 
 
@@ -413,17 +418,6 @@ def save_config(config: Config, path: Path | None = None) -> None:
     if config.voice.output_device is not None:
         voice_table["output_device"] = config.voice.output_device
     data["voice"] = voice_table
-    home_assistant_table: dict = {
-        "enabled": config.home_assistant.enabled,
-        "host": config.home_assistant.host,
-        "port": config.home_assistant.port,
-        "use_https": config.home_assistant.use_https,
-        "timeout": config.home_assistant.timeout,
-        "verify_ssl": config.home_assistant.verify_ssl,
-    }
-    if config.home_assistant.token is not None:
-        home_assistant_table["token"] = config.home_assistant.token
-    data["home_assistant"] = home_assistant_table
     satellite_table: dict = {
         "enabled": config.satellite.enabled,
         "host": config.satellite.host,

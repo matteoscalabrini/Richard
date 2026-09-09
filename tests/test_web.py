@@ -4,7 +4,7 @@ import threading
 
 import pytest
 
-from richard.config import Config, load_config, save_config
+from richard.config import Config, HomeAssistant, load_config, save_config
 from richard.control_loops import ControlLoopStore, ControlTargetReader
 from richard.errors import HomeAssistantError
 from richard.plugins.home_assistant.client import HomeAssistantEntity
@@ -190,6 +190,7 @@ def test_put_config_updates_and_persists(tmp_path):
     assert reloaded.home_assistant.use_https is True
     assert reloaded.home_assistant.token == "secret"
     assert reloaded.home_assistant.verify_ssl is False
+    assert reloaded.plugins.tables["home_assistant"]["host"] == "ha.local"
     assert reloaded.web.port == 9000
     assert reloaded.web.enabled is False
 
@@ -390,9 +391,7 @@ def test_home_assistant_status_tests_connection_and_lists_safe_entity_summary(tm
 
     app = _app(tmp_path, home_assistant_client_factory=Client)
     config = load_config(app._config_path)
-    config.home_assistant.enabled = True
-    config.home_assistant.host = "ha.local"
-    config.home_assistant.token = "super-secret"
+    config.set_home_assistant(HomeAssistant(enabled=True, host="ha.local", token="super-secret"))
     save_config(config, app._config_path)
 
     response = app.handle("GET", "/api/home-assistant")
@@ -422,8 +421,7 @@ def test_home_assistant_status_returns_connection_error_as_feedback(tmp_path):
 
     app = _app(tmp_path, home_assistant_client_factory=Client)
     config = load_config(app._config_path)
-    config.home_assistant.enabled = True
-    config.home_assistant.token = "bad-token"
+    config.set_home_assistant(HomeAssistant(enabled=True, token="bad-token"))
     save_config(config, app._config_path)
 
     response = app.handle("GET", "/api/home-assistant")
@@ -570,9 +568,7 @@ def test_home_assistant_inventory_runs_off_the_event_loop(tmp_path):
 
     config_path = tmp_path / "config.toml"
     config = Config()
-    config.home_assistant.enabled = True
-    config.home_assistant.host = "ha.local"
-    config.home_assistant.token = "token"
+    config.set_home_assistant(HomeAssistant(enabled=True, host="ha.local", token="token"))
     save_config(config, config_path)
     app = WebApp(
         config_path=config_path,

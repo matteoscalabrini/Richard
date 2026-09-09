@@ -89,65 +89,59 @@ def test_llm_timeout_env_override(tmp_path, monkeypatch):
     assert load_config(path).llm_timeout == 30.0
 
 
-def test_home_assistant_defaults():
-    ha = Config().home_assistant
-    assert ha.enabled is False
-    assert ha.host == "homeassistant.local"
-    assert ha.port == 8123
-    assert ha.url == "http://homeassistant.local:8123"
-    assert ha.token is None
-    assert ha.timeout == 10.0
-    assert ha.verify_ssl is True
+def test_home_assistant_view_defaults():
+    config = Config()
+    assert config.home_assistant.enabled is False
+    assert config.home_assistant.host == "homeassistant.local"
+    assert "home_assistant" not in config.plugins.tables
 
 
-def test_home_assistant_roundtrip(tmp_path):
+def test_set_home_assistant_writes_the_plugin_table(tmp_path):
+    config = Config()
+    settings = HomeAssistant(enabled=True, host="ha.local", port=9443, use_https=True, token="t", timeout=5.0, verify_ssl=False)
+    config.set_home_assistant(settings)
+    assert config.plugins.enabled == ["home_assistant"]
+    assert config.plugins.tables["home_assistant"] == {
+        "host": "ha.local", "port": 9443, "use_https": True, "token": "t", "timeout": 5.0, "verify_ssl": False,
+    }
     path = tmp_path / "config.toml"
-    save_config(
-        Config(
-            home_assistant=HomeAssistant(
-                enabled=True,
-                host="ha.example.test",
-                port=8443,
-                use_https=True,
-                token="secret",
-                timeout=20.0,
-                verify_ssl=False,
-            )
-        ),
-        path,
-    )
-    ha = load_config(path).home_assistant
-    assert ha.enabled is True
-    assert ha.host == "ha.example.test"
-    assert ha.port == 8443
-    assert ha.url == "https://ha.example.test:8443"
-    assert ha.token == "secret"
-    assert ha.timeout == 20.0
-    assert ha.verify_ssl is False
+    save_config(config, path)
+    text = path.read_text()
+    assert "[plugins.home_assistant]" in text
+    assert "[home_assistant]" not in text
+    again = load_config(path)
+    assert again.home_assistant == settings
+    settings.enabled = False
+    again.set_home_assistant(settings)
+    assert again.plugins.enabled == []
 
 
-def test_home_assistant_env_overrides(tmp_path, monkeypatch):
+def test_legacy_home_assistant_table_is_migrated_and_dropped_on_save(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text('[home_assistant]\nenabled = true\nurl = "https://ha-old.example:9443/api"\ntoken = "legacy"\n')
+    config = load_config(path)
+    assert config.plugins.enabled == ["home_assistant"]
+    assert config.home_assistant.host == "ha-old.example"
+    assert config.home_assistant.port == 9443
+    assert config.home_assistant.use_https is True
+    assert config.home_assistant.token == "legacy"
+    save_config(config, path)
+    assert "[home_assistant]" not in path.read_text()
+    assert load_config(path).home_assistant.host == "ha-old.example"
+
+
+def test_home_assistant_env_overrides_write_the_plugin_table(monkeypatch, tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text("")
     monkeypatch.setenv("RICHARD_HA_ENABLED", "on")
-    monkeypatch.setenv("RICHARD_HA_URL", "http://ha-env:8123")
-    monkeypatch.setenv("RICHARD_HA_TOKEN", "env-secret")
-    ha = load_config(tmp_path / "missing.toml").home_assistant
-    assert ha.enabled is True
-    assert ha.host == "ha-env"
-    assert ha.port == 8123
-    assert ha.url == "http://ha-env:8123"
-    assert ha.token == "env-secret"
-
-
-def test_home_assistant_loads_legacy_url_config(tmp_path):
-    path = tmp_path / "config.toml"
-    path.write_text(
-        '[home_assistant]\nenabled = true\nurl = "https://ha-old.example:9443/api"\n'
-    )
-    ha = load_config(path).home_assistant
-    assert ha.host == "ha-old.example"
-    assert ha.port == 9443
-    assert ha.use_https is True
-    assert ha.url == "https://ha-old.example:9443"
+    monkeypatch.setenv("RICHARD_HA_URL", "https://ha.example:9443")
+    monkeypatch.setenv("RICHARD_HA_TOKEN", "env-token")
+    config = load_config(path)
+    assert config.plugins.enabled == ["home_assistant"]
+    assert config.home_assistant.url == "https://ha.example:9443"
+    assert config.home_assistant.token == "env-token"
+    monkeypatch.setenv("RICHARD_HA_ENABLED", "off")
+    assert load_config(path).plugins.enabled == []
 
 
 def test_voice_config_roundtrips(tmp_path):

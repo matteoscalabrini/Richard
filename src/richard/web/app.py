@@ -367,30 +367,34 @@ def _apply_config_update(config: Config, patch: dict) -> list[str]:
             changed.append("voice.endpoint_silence_ms")
     h = patch.get("home_assistant")
     if isinstance(h, dict):
+        ha = config.home_assistant
+        before = len(changed)
         if "enabled" in h:
-            config.home_assistant.enabled = _as_bool(h["enabled"])
+            ha.enabled = _as_bool(h["enabled"])
             changed.append("home_assistant.enabled")
         if "url" in h:
-            apply_home_assistant_url(config.home_assistant, str(h["url"]))
+            apply_home_assistant_url(ha, str(h["url"]))
             changed.append("home_assistant.url")
         if "host" in h:
-            config.home_assistant.host = str(h["host"]).strip()
+            ha.host = str(h["host"]).strip()
             changed.append("home_assistant.host")
         if "port" in h:
-            config.home_assistant.port = max(1, min(65535, _as_int(h["port"], 8123)))
+            ha.port = max(1, min(65535, _as_int(h["port"], 8123)))
             changed.append("home_assistant.port")
         if "use_https" in h:
-            config.home_assistant.use_https = _as_bool(h["use_https"])
+            ha.use_https = _as_bool(h["use_https"])
             changed.append("home_assistant.use_https")
         if "token" in h:
-            config.home_assistant.token = str(h["token"]) or None
+            ha.token = str(h["token"]) or None
             changed.append("home_assistant.token")
         if "timeout" in h:
-            config.home_assistant.timeout = _clamp_float(h["timeout"], 1.0, 300.0)
+            ha.timeout = _clamp_float(h["timeout"], 1.0, 300.0)
             changed.append("home_assistant.timeout")
         if "verify_ssl" in h:
-            config.home_assistant.verify_ssl = _as_bool(h["verify_ssl"])
+            ha.verify_ssl = _as_bool(h["verify_ssl"])
             changed.append("home_assistant.verify_ssl")
+        if len(changed) > before:
+            config.set_home_assistant(ha)
     s = patch.get("satellite")
     if isinstance(s, dict):
         if "enabled" in s:
