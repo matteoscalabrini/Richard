@@ -402,15 +402,14 @@ SPA_HTML = r"""<!DOCTYPE html>
 
     <section class="drawer-page" data-drawer-page="configuration" hidden>
       <button type="button" class="drawer-back" data-drawer-back="menu">‹ Back to menu</button>
-      <div class="drawer-title" tabindex="-1"><b>&gt; CONFIGURATION</b><span>06 PAGES</span></div>
+      <div class="drawer-title" tabindex="-1"><b>&gt; CONFIGURATION</b><span>05 PAGES</span></div>
       <p class="drawer-copy">Settings are grouped by the part of Richard they change.</p>
       <nav class="drawer-nav" aria-label="Configuration pages">
         <button type="button" data-drawer-open="brain">Brain <span>LLM ›</span></button>
         <button type="button" data-drawer-open="personality">Personality <span>RICHARD ›</span></button>
         <button type="button" data-drawer-open="voice">Voice <span>STT + TTS ›</span></button>
-        <button type="button" data-drawer-open="home-assistant">Home Assistant <span>›</span></button>
-        <button type="button" data-drawer-open="satellite">Satellite <span>RELAY ›</span></button>
-        <button type="button" data-drawer-open="web-access">Web access <span>HTTPS ›</span></button>
+        <button type="button" data-drawer-open="plugins">Plugins <span>CONNECTIONS ›</span></button>
+        <button type="button" data-drawer-open="network">Network <span>REALTIME + RELAY + WEB ›</span></button>
       </nav>
     </section>
 
@@ -456,22 +455,16 @@ SPA_HTML = r"""<!DOCTYPE html>
       <div class="drawer-page-body" data-panel-content="voice-stt-content voice-tts-content voice-sample-content voice-effect-content voice-turn-content voice-mic-content"></div>
     </section>
 
-    <section class="drawer-page" data-drawer-page="home-assistant" hidden>
+    <section class="drawer-page" data-drawer-page="plugins" hidden>
       <button type="button" class="drawer-back" data-drawer-back="configuration">‹ Back to configuration</button>
-      <div class="drawer-title" tabindex="-1"><b>&gt; HOME ASSISTANT</b><span>system.home_assistant</span></div>
-      <div class="drawer-page-body" data-panel-content="home-assistant-content"></div>
+      <div class="drawer-title" tabindex="-1"><b>&gt; PLUGINS</b><span>system.plugins</span></div>
+      <div class="drawer-page-body" data-panel-content="plugins-content home-assistant-content"></div>
     </section>
 
-    <section class="drawer-page" data-drawer-page="satellite" hidden>
+    <section class="drawer-page" data-drawer-page="network" hidden>
       <button type="button" class="drawer-back" data-drawer-back="configuration">‹ Back to configuration</button>
-      <div class="drawer-title" tabindex="-1"><b>&gt; SATELLITE</b><span>system.relay.mesh</span></div>
-      <div class="drawer-page-body" data-panel-content="relay-content"></div>
-    </section>
-
-    <section class="drawer-page" data-drawer-page="web-access" hidden>
-      <button type="button" class="drawer-back" data-drawer-back="configuration">‹ Back to configuration</button>
-      <div class="drawer-title" tabindex="-1"><b>&gt; WEB ACCESS</b><span>system.web.access</span></div>
-      <div class="drawer-page-body" data-panel-content="web-content"></div>
+      <div class="drawer-title" tabindex="-1"><b>&gt; NETWORK</b><span>system.network</span></div>
+      <div class="drawer-page-body" data-panel-content="realtime-content relay-content web-content"></div>
     </section>
   </aside>
 
@@ -676,6 +669,20 @@ SPA_HTML = r"""<!DOCTYPE html>
       </div>
     </div>
 
+    <!-- system.plugins.registry -->
+    <div class="terminal-section">
+      <div class="terminal-header-line" data-target="plugins-content">
+        <span class="terminal-prompt">&gt; </span>
+        <span class="terminal-command window-title">system.plugins.registry</span>
+        <span class="window-control is-open">[_]</span>
+      </div>
+      <div class="window-content" id="plugins-content">
+        <p class="lede">Connections Richard can use. Installed plugins come from Python entry points (richard plugins install). Enabling or disabling one takes effect after a restart.</p>
+        <div class="entry-list" id="plugins-list"><div class="empty-message">Loading…</div></div>
+        <div class="button-row"><button class="setting-button small" id="plugins-refresh">Refresh</button><button class="setting-button small" id="plugins-restart">Restart to apply</button><div class="status-line" id="plugins-status"></div></div>
+      </div>
+    </div>
+
     <!-- system.home_assistant.api -->
     <div class="terminal-section">
       <div class="terminal-header-line" data-target="home-assistant-content">
@@ -684,7 +691,7 @@ SPA_HTML = r"""<!DOCTYPE html>
         <span class="window-control is-open">[_]</span>
       </div>
       <div class="window-content" id="home-assistant-content">
-        <p class="lede">Expose Home Assistant entities and service calls to Richard. Use a long-lived access token from your Home Assistant profile. Save, test the connection, then restart Richard to load the provider.</p>
+        <p class="lede">Home Assistant plugin: entities and service calls. Use a long-lived access token from your Home Assistant profile. Save, test the connection, then restart Richard to apply.</p>
         <div class="setting-group"><div class="checkbox-btn"><input type="checkbox" id="home_assistant.enabled"><label for="home_assistant.enabled">Home Assistant enabled</label><span class="checkmark"></span></div></div>
         <div class="field-row">
           <div class="setting-group"><label class="setting-label">IP / hostname</label><input id="home_assistant.host" class="setting-input" placeholder="192.168.1.20 or homeassistant.local"></div>
@@ -743,6 +750,25 @@ SPA_HTML = r"""<!DOCTYPE html>
         <div class="entry-list" id="control-loop-list"><div class="empty-message">No control loops.</div></div>
         <div class="setting-group" style="margin-top:1rem;"><label class="setting-label">Richard event inbox</label><span class="lede" style="margin:0;">LLM responses generated after monitored changes.</span></div>
         <div class="entry-list" id="control-notification-list"><div class="empty-message">No control-loop notifications.</div></div>
+      </div>
+    </div>
+
+    <!-- system.realtime.api -->
+    <div class="terminal-section">
+      <div class="terminal-header-line" data-target="realtime-content">
+        <span class="terminal-prompt">&gt; </span>
+        <span class="terminal-command window-title">system.realtime.api</span>
+        <span class="window-control is-open">[_]</span>
+      </div>
+      <div class="window-content" id="realtime-content">
+        <p class="lede">The OpenAI-style realtime WebSocket the Reachy Conversation App and the browser voice mode connect to (wss://host:port/v1/realtime). Restart to apply.</p>
+        <div class="setting-group"><div class="checkbox-btn"><input type="checkbox" id="realtime.enabled"><label for="realtime.enabled">Realtime API enabled</label><span class="checkmark"></span></div></div>
+        <div class="field-row">
+          <div class="setting-group"><label class="setting-label">Host</label><input id="realtime.host" class="setting-input"></div>
+          <div class="setting-group"><label class="setting-label">Port</label><input id="realtime.port" type="number" class="setting-input"></div>
+        </div>
+        <div class="setting-group"><label class="setting-label">Token</label><input id="realtime.token" class="setting-input" placeholder="(open — set one to require it)" autocomplete="off"></div>
+        <div class="button-row"><button class="setting-button" data-save="realtime">Save changes</button><div class="status-line" id="realtime-status"></div></div>
       </div>
     </div>
 
@@ -809,7 +835,7 @@ SPA_HTML = r"""<!DOCTYPE html>
         <span class="window-control is-open">[_]</span>
       </div>
       <div class="window-content" id="serve-content">
-        <p class="lede">Restart the relay + web server to apply changes that need a reboot — host/port, STT/TTS engines, and personality (base prompt + dials). Connections drop for a few seconds.</p>
+        <p class="lede">Restart the relay, realtime and web servers to apply changes that need it: host/port changes, STT/TTS engines and endpoints, the voice effect, personality, plugin enable/disable and plugin settings. Connections drop for a few seconds.</p>
         <div class="button-row"><button class="setting-button" id="serve-reboot">Reboot serve</button><div class="status-line" id="serve-status"></div></div>
       </div>
     </div>
@@ -870,9 +896,13 @@ const FIELDS = [
   {id:'web.enabled', path:['web','enabled'], t:'bool', sec:'web'},
   {id:'web.host', path:['web','host'], t:'text', sec:'web'},
   {id:'web.port', path:['web','port'], t:'port', sec:'web'},
+  {id:'realtime.enabled', path:['realtime','enabled'], t:'bool', sec:'realtime'},
+  {id:'realtime.host', path:['realtime','host'], t:'text', sec:'realtime'},
+  {id:'realtime.port', path:['realtime','port'], t:'port', sec:'realtime'},
+  {id:'realtime.token', path:['realtime','token'], t:'text', sec:'realtime'},
 ];
 const BY_ID = Object.fromEntries(FIELDS.map(f => [f.id, f]));
-const SAVABLE = ['brain','personality','voice-stt','voice-tts','voice-effect','voice-turn','voice-mic','home-assistant','relay','web'];
+const SAVABLE = ['brain','personality','voice-stt','voice-tts','voice-effect','voice-turn','voice-mic','home-assistant','relay','web','realtime'];
 let baseline = {};
 
 const $ = id => document.getElementById(id);
@@ -1094,6 +1124,31 @@ async function uploadVoiceSample(){
   } catch (e) { setStatus('voice-sample', 'upload failed: ' + e.message, 'err'); }
 }
 
+function renderPlugins(rows){
+  const box = $('plugins-list');
+  if (!rows.length) { box.innerHTML = '<div class="empty-message">No plugins installed.</div>'; return; }
+  box.innerHTML = rows.map(r => {
+    const state = r.running === 'unknown' ? '' : ' · running: ' + esc(r.running) + (r.error ? ' (' + esc(r.error) + ')' : '');
+    return '<div class="entry"><div class="entry-main"><div class="entry-name">' + esc(r.name) + ' <span class="entry-sub">' + esc(r.version) + '</span></div>' +
+      '<div class="entry-sub">' + (r.configured ? 'enabled' : 'disabled') + state + '</div></div>' +
+      '<button class="setting-button small" data-plugin-toggle="' + esc(r.name) + '" data-plugin-enabled="' + (r.configured ? '1' : '0') + '">' + (r.configured ? 'Disable' : 'Enable') + '</button></div>';
+  }).join('');
+}
+
+async function loadPlugins(){
+  try { renderPlugins((await getJSON('/api/plugins')).plugins); }
+  catch (e) { $('plugins-list').innerHTML = '<div class="empty-message">' + esc(e.message) + '</div>'; }
+}
+
+async function togglePlugin(name, enabled){
+  setStatus('plugins', (enabled ? 'enabling ' : 'disabling ') + name + '…', '');
+  try {
+    const data = await sendJSON('/api/plugins', 'PUT', {name, enabled});
+    renderPlugins(data.plugins);
+    setStatus('plugins', name + (enabled ? ' enabled' : ' disabled') + ' · restart to apply · ' + hm(), 'ok');
+  } catch (e) { setStatus('plugins', 'failed: ' + e.message, 'err'); }
+}
+
 const MEMORY_COLLAPSED_LIMIT = 12;
 let memoryCache = [];
 let memoriesExpanded = false;
@@ -1296,6 +1351,7 @@ async function refreshAll(){
     applyConfig(cfg);
     renderMemories(memories.memories);
     try { await loadVoices(); } catch (e) {}
+    try { await loadPlugins(); } catch (e) {}
     try { await refreshHomeAssistant(); } catch (e) {}
     try { await refreshControlData(); } catch (e) { setStatus('control-loop', 'unavailable: ' + e.message, 'err'); }
   } catch (e) { setConnected(false); }
@@ -1649,6 +1705,9 @@ $('home-assistant-restart').addEventListener('click', rebootServe);
 $('voice.tts_engine').addEventListener('change', () => { reflectRemoteOnly(); loadVoices(); });
 $('voice-sample-upload').addEventListener('click', uploadVoiceSample);
 $('voice-list').addEventListener('click', e => { const b = e.target.closest('[data-use-voice]'); if (b) useVoice(b.dataset.useVoice); });
+$('plugins-refresh').addEventListener('click', loadPlugins);
+$('plugins-restart').addEventListener('click', rebootServe);
+$('plugins-list').addEventListener('click', e => { const b = e.target.closest('[data-plugin-toggle]'); if (b) togglePlugin(b.dataset.pluginToggle, b.dataset.pluginEnabled !== '1'); });
 $('home-assistant-entity-filter').addEventListener('input', filterHomeAssistantEntities);
 $('memory-add').addEventListener('click', addMemory);
 $('memory-text').addEventListener('keydown', e => { if (e.key === 'Enter') addMemory(); });

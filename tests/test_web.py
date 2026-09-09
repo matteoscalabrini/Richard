@@ -288,19 +288,11 @@ def test_web_ui_has_two_stage_drawer_and_all_page_destinations(tmp_path):
     assert 'id="richard-drawer"' in html
     assert 'data-drawer-page="menu"' in html
     assert 'data-drawer-page="configuration"' in html
-    for page in (
-        "conversation",
-        "automations",
-        "memory",
-        "system",
-        "brain",
-        "personality",
-        "voice",
-        "home-assistant",
-        "satellite",
-        "web-access",
-    ):
+    for page in ("conversation", "automations", "memory", "system", "brain", "personality", "voice", "plugins", "network"):
         assert f'data-drawer-page="{page}"' in html
+    for gone in ("home-assistant", "satellite", "web-access"):
+        assert f'data-drawer-page="{gone}"' not in html
+    assert "05 PAGES" in html and "06 PAGES" not in html
     assert 'data-drawer-open="configuration"' in html
     assert 'data-drawer-back="menu"' in html
     assert 'data-drawer-back="configuration"' in html
@@ -1204,3 +1196,15 @@ def test_web_ui_voice_page_has_sections_upload_and_effect(tmp_path):
     assert "function reflectRemoteOnly()" in html
     assert "async function uploadVoiceSample()" in html
     assert 'id="voice-content"' not in html
+
+
+def test_web_ui_has_plugins_and_network_pages(tmp_path):
+    html = _app(tmp_path).handle("GET", "/").body.decode()
+    assert 'data-panel-content="plugins-content home-assistant-content"' in html
+    assert 'data-panel-content="realtime-content relay-content web-content"' in html
+    for element_id in ("plugins-list", "plugins-refresh", "plugins-restart", "plugins-status", "realtime.enabled", "realtime.host", "realtime.port", "realtime.token", "realtime-status"):
+        assert f'id="{element_id}"' in html, element_id
+    assert 'data-save="realtime"' in html
+    assert "/api/plugins" in html
+    assert "async function togglePlugin(name, enabled)" in html
+    assert "plugin enable/disable" in html  # the serve lede lists what needs a restart
