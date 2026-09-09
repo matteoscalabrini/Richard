@@ -13,13 +13,16 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import binascii
 import io
 import json
+import re
 import threading
 import wave
 from collections import Counter
 from collections.abc import Iterator
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Callable
 
@@ -39,7 +42,11 @@ from richard.memory import MemoryStore
 from richard.persona import BASE_CHARACTER
 from richard.satellite.relays import RelayRegistry
 from richard.voice.effects import EFFECTS
+from richard.voice.voices import VoiceLibrary
 from richard.web.static import SPA_HTML
+
+_VOICE_NAME_RE = re.compile(r"[A-Za-z0-9_-]{1,32}")
+_MAX_VOICE_SAMPLE_BYTES = 8 * 1024 * 1024
 
 _ICON_PATH = Path(__file__).with_name("icon.png")
 
@@ -461,6 +468,7 @@ class WebApp:
         engine_factory: Callable[[], object] | None = None,
         voice_turn: Callable[[list, bytes], dict] | None = None,
         home_assistant_client_factory: Callable[..., object] = HomeAssistantClient,
+        voice_library_factory: Callable[[str], object] = VoiceLibrary,
     ) -> None:
         self._config_path = config_path
         self._memory = memory_store
@@ -473,6 +481,7 @@ class WebApp:
         self._engine_factory = engine_factory
         self._voice_turn = voice_turn
         self._home_assistant_client_factory = home_assistant_client_factory
+        self._voice_library_factory = voice_library_factory
 
     def handle(self, method: str, path: str, body: bytes = b"") -> Response:
         """Dispatch one request. Catches handler exceptions so a single bad request
@@ -516,6 +525,10 @@ class WebApp:
             return self._delete_control_notification(
                 path[len("/api/control-loop-notifications/"):]
             )
+        if method == "GET" and path == "/api/voices":
+            return self._list_voices()
+        if method == "POST" and path == "/api/voices":
+            return self._upload_voice(body)
         if method == "POST" and path == "/api/restart":
             return self._restart_serve()
         return Response.not_found()
@@ -545,6 +558,53 @@ class WebApp:
         # read-only: lets the UI show the built-in base as the prompt placeholder
         payload["prompt_default"] = BASE_CHARACTER
         return Response.json(payload)
+
+    # --- voice library (remote TTS server) ---
+
+    def _voice_library(self):
+        config = self._load(self._config_path)
+        if config.voice.tts_engine != "remote" or not config.voice.tts_endpoint:
+            return None, "The voice library needs the remote TTS engine and its endpoint."
+        return self._voice_library_factory(config.voice.tts_endpoint), None
+
+    def _list_voices(self) -> Response:
+        library, error = self._voice_library()
+        if library is None:
+            return Response.json({"error": error, "voices": [], "uploaded": []}, 503)
+        try:
+            return Response.json(library.list())
+        except Exception as exc:  # noqa: BLE001 — an unreachable server is feedback, not a crash
+            return Response.json({"error": f"voice list failed: {exc}", "voices": [], "uploaded": []}, 503)
+
+    def _upload_voice(self, body: bytes) -> Response:
+        try:
+            payload = json.loads(body or b"{}")
+        except (ValueError, TypeError) as exc:
+            return Response.bad_request(f"invalid JSON: {exc}")
+        if not isinstance(payload, dict):
+            return Response.bad_request("expected an object")
+        name = str(payload.get("name", "")).strip()
+        if not _VOICE_NAME_RE.fullmatch(name):
+            return Response.bad_request("voice name: letters, digits, _ and -, at most 32 characters")
+        try:
+            audio = base64.b64decode(str(payload.get("audio_base64", "")), validate=True)
+        except (ValueError, binascii.Error):
+            return Response.bad_request("audio_base64 is not valid base64")
+        if not audio:
+            return Response.bad_request("an audio file is required")
+        if len(audio) > _MAX_VOICE_SAMPLE_BYTES:
+            return Response.json({"error": "sample larger than 8 MB"}, 413)
+        library, error = self._voice_library()
+        if library is None:
+            return Response.json({"error": error}, 503)
+        filename = str(payload.get("filename") or f"{name}.wav")
+        consent = f"web-{name}-{date.today().isoformat()}"
+        try:
+            library.upload(name, audio, filename, transcript=str(payload.get("transcript") or ""), consent=consent)
+            listing = library.list()
+        except Exception as exc:  # noqa: BLE001
+            return Response.json({"error": f"upload failed: {exc}"}, 502)
+        return Response.json({"uploaded": name, "voices": listing["voices"], "uploaded_list": listing["uploaded"]})
 
     def _restart_serve(self) -> Response:
         if self._restart is None:

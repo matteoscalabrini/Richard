@@ -35,6 +35,8 @@ def _app(
     control_loops=None,
     home_assistant_client_factory=None,
     entities=(),
+    voice_library_factory=None,
+    plugin_records=None,
 ):
     config_path = tmp_path / "config.toml"
     save_config(Config(), config_path)
@@ -42,6 +44,10 @@ def _app(
     kwargs = {}
     if home_assistant_client_factory is not None:
         kwargs["home_assistant_client_factory"] = home_assistant_client_factory
+    if voice_library_factory is not None:
+        kwargs["voice_library_factory"] = voice_library_factory
+    if plugin_records is not None:
+        kwargs["plugin_records"] = plugin_records
     return WebApp(
         config_path=config_path,
         memory_store=memory or MemoryStore(":memory:"),
@@ -1062,3 +1068,76 @@ def test_put_realtime_token(tmp_path):
     rt = load_config(app._config_path).realtime
     assert (rt.token, rt.port) == ("s3cret", 8767)
     assert _body(app.handle("GET", "/api/config"))["realtime"]["token"] == "s3cret"
+
+
+import base64
+
+
+class FakeVoiceLibrary:
+    def __init__(self, endpoint, fail=False):
+        self.endpoint = endpoint
+        self.fail = fail
+        self.uploads = []
+        self.names = ["clap1", "default"]
+
+    def list(self):
+        if self.fail:
+            raise RuntimeError("server down")
+        return {"voices": list(self.names), "uploaded": [{"name": "clap1", "ref_text": "oh hi", "created_at": 1}]}
+
+    def upload(self, name, audio, filename, *, transcript="", consent=""):
+        self.uploads.append((name, audio, filename, transcript, consent))
+        self.names.append(name)
+        return {"name": name}
+
+
+def _remote_app(tmp_path, library):
+    app = _app(tmp_path, voice_library_factory=lambda endpoint: library)
+    config = load_config(app._config_path)
+    config.voice.tts_engine = "remote"
+    config.voice.tts_endpoint = "http://tts:8091"
+    save_config(config, app._config_path)
+    return app
+
+
+def test_voices_list_needs_the_remote_engine(tmp_path):
+    resp = _app(tmp_path, voice_library_factory=lambda endpoint: FakeVoiceLibrary(endpoint)).handle("GET", "/api/voices")
+    assert resp.status == 503
+    assert "remote" in _body(resp)["error"]
+
+
+def test_voices_list_proxies_the_server(tmp_path):
+    library = FakeVoiceLibrary("unused")
+    data = _body(_remote_app(tmp_path, library).handle("GET", "/api/voices"))
+    assert data["voices"] == ["clap1", "default"]
+    assert data["uploaded"][0]["name"] == "clap1"
+
+
+def test_voices_list_reports_a_dead_server(tmp_path):
+    resp = _remote_app(tmp_path, FakeVoiceLibrary("unused", fail=True)).handle("GET", "/api/voices")
+    assert resp.status == 503 and "server down" in _body(resp)["error"]
+
+
+def test_voice_upload_forwards_the_sample_and_refreshes_the_list(tmp_path):
+    library = FakeVoiceLibrary("unused")
+    app = _remote_app(tmp_path, library)
+    payload = {"name": "clap1v", "transcript": "oh hi", "filename": "clap1v.wav", "audio_base64": base64.b64encode(b"RIFF....").decode()}
+    resp = app.handle("POST", "/api/voices", json.dumps(payload).encode())
+    assert resp.status == 200, resp.body
+    data = _body(resp)
+    assert data["uploaded"] == "clap1v" and "clap1v" in data["voices"]
+    name, audio, filename, transcript, consent = library.uploads[0]
+    assert (name, audio, filename, transcript) == ("clap1v", b"RIFF....", "clap1v.wav", "oh hi")
+    assert consent.startswith("web-clap1v-")
+
+
+def test_voice_upload_validates_name_audio_and_size(tmp_path):
+    app = _remote_app(tmp_path, FakeVoiceLibrary("unused"))
+    bad_name = {"name": "bad name!", "audio_base64": base64.b64encode(b"x").decode()}
+    assert app.handle("POST", "/api/voices", json.dumps(bad_name).encode()).status == 400
+    no_audio = {"name": "ok", "audio_base64": ""}
+    assert app.handle("POST", "/api/voices", json.dumps(no_audio).encode()).status == 400
+    not_b64 = {"name": "ok", "audio_base64": "@@@"}
+    assert app.handle("POST", "/api/voices", json.dumps(not_b64).encode()).status == 400
+    huge = {"name": "ok", "audio_base64": base64.b64encode(b"\0" * (8 * 1024 * 1024 + 1)).decode()}
+    assert app.handle("POST", "/api/voices", json.dumps(huge).encode()).status == 413
