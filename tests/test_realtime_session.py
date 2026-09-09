@@ -638,3 +638,16 @@ def test_unsolicited_reply_that_merely_starts_like_the_sentinel_is_spoken():
     assert text == "NOTHING beats a coffee. Welcome back."
     assert session.conversation.history()[-1].content == text
     session.close()
+
+
+def test_unsolicited_turns_are_logged(caplog):
+    import logging
+    engine = FakeEngine(deltas=("NOTHING_TO_SAY",))
+    session, emitted, done = collect_session(engine=engine, detector=ScriptedDetector([]))
+    session.add_context("someone entered (browser)")
+    with caplog.at_level(logging.INFO, logger="richard.realtime"):
+        session.wake()
+        wait(done)
+    assert "perception wake: unsolicited turn starting" in caplog.text
+    assert "chose silence" in caplog.text
+    session.close()

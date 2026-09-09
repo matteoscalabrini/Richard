@@ -8,6 +8,7 @@ through emit(dict), which must be thread-safe (server.py marshals to the WS).
 """
 from __future__ import annotations
 
+import logging
 import queue
 import threading
 import time
@@ -28,9 +29,12 @@ NO_CLIENT_RESULT = "no result from client"
 # held back from the chunker and never spoken or stored (same idiom as NOTHING_TO_RUN).
 NOTHING_TO_SAY = "NOTHING_TO_SAY"
 UNSOLICITED_RULE = (
-    "You were not addressed. Say something only if it is worth saying right now "
-    f"(a greeting, a remark worth making); otherwise reply exactly {NOTHING_TO_SAY}."
+    "Nobody addressed you; this is something you noticed. A brief greeting or a remark "
+    "about what you noticed is welcome. If speaking now would be unwelcome or pointless, "
+    f"reply exactly {NOTHING_TO_SAY}."
 )
+
+log = logging.getLogger("richard.realtime")
 
 
 class RealtimeSession:
@@ -117,7 +121,9 @@ class RealtimeSession:
         """Run an unsolicited turn on the queued context, if idle. False when nothing is
         queued or a response is active (the context then waits for the next turn)."""
         if self.state != "listening" or not self._has_context():
+            log.info("perception wake skipped: state=%s queued=%s", self.state, self._has_context())
             return False
+        log.info("perception wake: unsolicited turn starting")
         self._unsolicited = True
         self._start_turn(None)
         return True
@@ -303,6 +309,10 @@ class RealtimeSession:
                     self._emit(events.text_delta(response_id, held))
                     if not all(self._speak(response_id, c) for c in chunker.feed(held)):
                         status = "cancelled"
+                else:
+                    log.info("unsolicited turn: the brain chose silence (%s)", NOTHING_TO_SAY)
+            if unsolicited and full:
+                log.info("unsolicited turn: spoke %d chars: %r", len(full), full[:120])
             if status == "completed" and not handed_to_client:
                 tail = chunker.flush()
                 if tail and not self._speak(response_id, tail):

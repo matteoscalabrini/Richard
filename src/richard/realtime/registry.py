@@ -3,7 +3,10 @@ conversation. Perception offers context lines here; spec one adds server-initiat
 turns (`prompt`, `say`) on the same registry."""
 from __future__ import annotations
 
+import logging
 import threading
+
+log = logging.getLogger("richard.realtime")
 
 
 class SessionRegistry:
@@ -29,6 +32,7 @@ class SessionRegistry:
         """Queue a context line on every open session; with `wake`, ask each idle session
         to run an unsolicited turn on it now (busy sessions keep it for their next turn)."""
         sessions = self.active()
+        log.info("perception context offered to %d session(s) (wake=%s): %s", len(sessions), wake, line)
         for session in sessions:
             session.add_context(line)
             if wake:
