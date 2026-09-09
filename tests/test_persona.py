@@ -66,3 +66,15 @@ def test_act_in_same_turn_rule_survives_a_custom_base():
     assert "call the tool in the same turn" in build_system_prompt(Personality())
     custom = build_system_prompt(Personality(system_prompt="You are a toaster."))
     assert "call the tool in the same turn" in custom
+
+
+def test_prompt_ends_with_static_perception_rules():
+    from richard.persona import ACTION_RULES, PERCEPTION_RULES
+
+    prompt = build_system_prompt(Personality())
+    assert prompt.endswith(f"{ACTION_RULES}\n\n{PERCEPTION_RULES}")
+    assert "cannot see right now" in PERCEPTION_RULES
+    assert "never describe a scene you have not been shown" in PERCEPTION_RULES
+    # custom prompts get the same contract
+    custom = build_system_prompt(Personality(system_prompt="You are {name}."))
+    assert custom.endswith(PERCEPTION_RULES)

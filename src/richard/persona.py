@@ -18,6 +18,16 @@ ACTION_RULES = (
     "tool result is in."
 )
 
+# Static on purpose: the head is pinned per conversation for prefix caching, so what
+# Richard can see is phrased conditionally instead of varying with the session. The
+# camera tool's own description says when to look.
+PERCEPTION_RULES = (
+    "Perception: you see only through pictures — an image attached to a message, or a "
+    "frame you take by calling a camera tool when one is offered. With neither, say you "
+    "cannot see right now; never describe a scene you have not been shown. A picture "
+    "shows one moment from one viewpoint."
+)
+
 
 def _humour_line(v: int) -> str:
     if v <= 20:
@@ -63,4 +73,4 @@ def build_system_prompt(personality: Personality) -> str:
             _directness_line(personality.directness),
         ]
     )
-    return f"{base}\n\n{settings}\n\n{ACTION_RULES}"
+    return f"{base}\n\n{settings}\n\n{ACTION_RULES}\n\n{PERCEPTION_RULES}"
