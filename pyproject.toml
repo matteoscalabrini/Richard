@@ -33,6 +33,10 @@ voice = [
     "webrtcvad-wheels>=2.0.14",
     "websockets>=14",
 ]
+perception = [
+    "Pillow>=10",
+    "onnxruntime>=1.17",
+]
 
 [project.urls]
 Homepage = "https://github.com/matteoscalabrini/Richard"
@@ -44,6 +48,7 @@ richard = "richard.cli:main"
 
 [project.entry-points."richard.plugins"]
 home_assistant = "richard.plugins.home_assistant:HomeAssistantPlugin"
+perception = "richard.plugins.perception:PerceptionPlugin"
 
 [tool.setuptools.packages.find]
 where = ["src"]
