@@ -165,6 +165,8 @@ TTS is pluggable: Kokoro or Piper in-process on CPU, or a remote OpenAI-compatib
 `/v1/audio/speech` server (Chatterbox with zero-shot voice cloning on GPU). Tune voice
 settings through the web UI or `richard config`.
 
+**Voice effect.** `[voice] tts_effect = "robot"` post-processes every spoken sentence (speaker colouring, ring modulation, bit crush) on any engine; `tts_effect_strength` (0–100) and `tts_effect_tone` (Hz) tune it from the web UI's Voice page. **Voice samples.** With the remote engine, the Voice page uploads a reference clip to the TTS server as a named voice and lists the server's voices.
+
 ## Web UI
 
 `richard serve` hosts the dependency-free web interface on its own port (default `8771`).

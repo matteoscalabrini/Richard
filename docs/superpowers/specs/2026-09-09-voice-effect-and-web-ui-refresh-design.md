@@ -30,8 +30,8 @@ keeps state between calls so chunked and whole-sentence synthesis sound identica
 - **Ring modulation**: multiply by a sine at `tone_hz`; the phase accumulator persists across
   calls. Mix = 0.6 × s where s = strength / 100.
 - **Bit-depth reduction**: quantise to `16 − 8 × s` bits (16 at s = 0, 8 at s = 1).
-- **Gain match**: the output is scaled so its peak equals the input's peak. No clipping, no
-  loudness jump against the plain voice.
+- **Makeup gain**: a fixed gain computed from the settings (compensating the ring modulator's
+  RMS loss), never from the block, so chunk boundaries stay seamless; hard clip to int16.
 - **Identity**: strength 0 returns the input bytes unchanged (early return, bit-exact).
 - The effect reads the sample rate it is given; a different rate on the next call rebuilds
   the FIR kernel and resets state.
@@ -100,9 +100,8 @@ Backend for the upload and the voice list:
 
 ## 4. Realtime API
 
-Fields: enabled, host, port, token. The token is write-only like the Home Assistant token:
-the config API returns `token: ""` and `token_configured: bool`; an empty PUT leaves it
-unchanged, a PUT with a value replaces it. Lede: "The OpenAI-style realtime WebSocket the
+Fields: enabled, host, port, token. The token is shown like any other field; the config API
+already echoes it because the browser voice mode needs it to open the socket. Lede: "The OpenAI-style realtime WebSocket the
 Reachy Conversation App connects to. Restart to apply." The config API gains a `realtime`
 block in `_config_to_dict` and `_apply_config_update`.
 
@@ -158,8 +157,8 @@ Script `Reachy/voice-refs/claptrap/clean.sh` and `Reachy/scripts/render_voice_sa
 ## 8. Tests
 
 - Effect: output length equals input length; silence stays silence; strength 0 is bit-exact
-  identity; processing one buffer equals processing it as two halves within ±1 LSB; peak of
-  the output equals the peak of the input; a sample-rate change rebuilds without error.
+  identity; processing one buffer equals processing it as two halves within ±1 LSB; RMS within
+  3 dB of the input on a pass-band tone mix; output never leaves int16; a sample-rate change rebuilds without error.
 - `EffectTTS`: forwards `samplerate`, calls the inner engine once, applies the effect.
 - Config: new keys round-trip and clamp; old Chatterbox keys are absent from the dataclass and
   ignored in files.

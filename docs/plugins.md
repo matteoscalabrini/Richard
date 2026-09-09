@@ -15,6 +15,9 @@ to the model, so "what can you do" is answered from what is enabled.
     richard plugins disable home_assistant
     richard plugins install ./my-plugin       # folder: editable install; else a PyPI name or git URL
 
+The web UI's Plugins page lists the same plugins with their running state and toggles the
+enabled list; restart Richard to apply, as with the CLI.
+
 Settings live in `~/.richard/config.toml`:
 
     [plugins]
