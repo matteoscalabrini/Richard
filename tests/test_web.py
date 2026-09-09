@@ -1346,3 +1346,13 @@ def test_voice_endpoint_400_on_bad_image(tmp_path):
         {"type": "image_url", "image_url": {"url": "nope"}}]}], "audio": ""}).encode()
     asyncio.run(_serve_voice(app, body, w))
     assert b"".join(w.chunks).startswith(b"HTTP/1.1 400")
+
+
+def test_home_page_has_the_attach_control_and_thumbnail_rendering(tmp_path):
+    html = _app(tmp_path).handle("GET", "/").body.decode()
+    assert 'id="chat-attach"' in html
+    assert 'id="chat-image-file"' in html and 'accept="image/*"' in html and 'capture="environment"' in html
+    assert 'id="chat-attach-chip"' in html
+    assert "function shrinkImage(" in html
+    assert "function contentThumbs(" in html
+    assert "chat-thumb" in html

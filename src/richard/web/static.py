@@ -139,6 +139,14 @@ SPA_HTML = r"""<!DOCTYPE html>
   .chat-msg .body { white-space: pre-wrap; word-break: break-word; }
   .chat-avatar { width: 18px; height: 18px; flex-shrink: 0; margin-top: 2px; object-fit: contain; }
   .chat-empty { color: var(--text-secondary); font-style: italic; }
+  .chat-thumb { display: block; max-width: 160px; max-height: 120px; border: var(--pixel-border); margin-top: 0.3rem; }
+  .attach-chip {
+    display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.35rem; padding: 0.3rem 0.5rem;
+    border: var(--pixel-border); background: var(--surface-light); font-size: 0.8rem;
+  }
+  .attach-chip img { width: 36px; height: 36px; object-fit: cover; border: var(--pixel-border); }
+  .attach-chip span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .attach-chip button { background: none; border: 0; color: var(--text-primary); cursor: pointer; font-size: 1rem; }
   .streaming::after { content: "▌"; animation: blink 1s step-end infinite; }
   @keyframes blink { 50% { opacity: 0; } }
   .setting-button.recording { background: var(--error-color); color: #000; border-color: var(--error-color); }
@@ -250,7 +258,7 @@ SPA_HTML = r"""<!DOCTYPE html>
     position: absolute; left: 50%; bottom: max(1.25rem, env(safe-area-inset-bottom));
     transform: translateX(-50%); width: min(680px, calc(100% - 2rem));
   }
-  .composer { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; }
+  .composer { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto auto; }
   .composer .setting-input { min-width: 0; border-right: 0; }
   .composer .setting-button { min-width: 58px; }
   .composer .composer-mic { border-left: 0; }
@@ -346,7 +354,7 @@ SPA_HTML = r"""<!DOCTYPE html>
     .richard-drawer { width: 100%; border-left: 0; }
     .entity-wrap { width: min(82vw, 360px); }
     .latest-reply, .composer-wrap { width: calc(100% - 1.5rem); }
-    .composer { grid-template-columns: minmax(0, 1fr) auto auto; }
+    .composer { grid-template-columns: minmax(0, 1fr) auto auto auto; }
     .composer-send {
       position: absolute; width: 1px; height: 1px; overflow: hidden;
       clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
@@ -392,12 +400,19 @@ SPA_HTML = r"""<!DOCTYPE html>
     </div>
     <p class="latest-reply" id="latest-reply" aria-live="polite">Ready when you are.</p>
     <div class="composer-wrap">
+      <div class="attach-chip" id="chat-attach-chip" hidden>
+        <img id="chat-attach-thumb" alt="">
+        <span id="chat-attach-name"></span>
+        <button type="button" id="chat-attach-clear" title="Remove the picture">×</button>
+      </div>
       <div class="composer">
         <input id="chat-input" class="setting-input" placeholder="Ask Richard…" autocomplete="off">
         <button class="setting-button composer-send" id="chat-send" type="button">Send</button>
+        <button class="setting-button composer-mic" id="chat-attach" type="button" title="Attach a picture">⊡</button>
         <button class="setting-button composer-mic" id="chat-mic" type="button" title="Hold to talk">●</button>
         <button class="setting-button composer-mic" id="voice-mode" type="button" title="Hands-free voice mode">◉</button>
       </div>
+      <input type="file" id="chat-image-file" accept="image/*" capture="environment" hidden>
       <div class="status-line" id="chat-status"></div>
     </div>
   </main>
@@ -1383,6 +1398,15 @@ async function refreshAll(){
 }
 
 const chatHistory = [];
+function contentText(c){
+  if (typeof c === 'string') return c;
+  return (c || []).filter(p => p && p.type === 'text').map(p => p.text).join(' ');
+}
+function contentThumbs(c){
+  if (typeof c === 'string') return '';
+  return (c || []).filter(p => p && p.type === 'image_url' && p.image_url && /^data:image\//.test(p.image_url.url))
+    .map(p => '<img class="chat-thumb" src="' + p.image_url.url + '" alt="attached picture">').join('');
+}
 function renderChatHistory(){
   const log = $('chat-log');
   if (!chatHistory.length) {
@@ -1392,20 +1416,62 @@ function renderChatHistory(){
   log.innerHTML = chatHistory.map(message =>
     '<div class="chat-msg ' + (message.role === 'user' ? 'user' : 'richard') + '">' +
       '<span class="who">' + (message.role === 'user' ? 'you&gt;' : 'richard&gt;') + '</span>' +
-      '<span class="body">' + esc(message.content) + '</span></div>'
+      '<span class="body">' + esc(contentText(message.content)) + contentThumbs(message.content) + '</span></div>'
   ).join('');
   log.scrollTop = log.scrollHeight;
 }
+
+/* ---- pictures: resized in the browser (800 px long edge ≈ 474 prompt tokens, measured) ---- */
+function frameFromCanvasSource(source, srcW, srcH, maxEdge, quality){
+  if (!srcW || !srcH) return null;
+  const scale = Math.min(1, maxEdge / Math.max(srcW, srcH));
+  const w = Math.round(srcW * scale), h = Math.round(srcH * scale);
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  c.getContext('2d').drawImage(source, 0, 0, w, h);
+  return {url: c.toDataURL('image/jpeg', quality == null ? 0.85 : quality), width: w, height: h};
+}
+async function shrinkImage(file, maxEdge, quality){
+  const bmp = await createImageBitmap(file);
+  try {
+    const shot = frameFromCanvasSource(bmp, bmp.width, bmp.height, maxEdge, quality);
+    if (!shot) throw new Error('empty image');
+    return shot;
+  } finally { bmp.close(); }
+}
+let pendingImage = null;  // {url, width, height, name}
+function showAttachChip(){
+  const chip = $('chat-attach-chip');
+  if (!pendingImage) { chip.hidden = true; return; }
+  $('chat-attach-thumb').src = pendingImage.url;
+  $('chat-attach-name').textContent = pendingImage.name + ' · ' + pendingImage.width + '×' + pendingImage.height;
+  chip.hidden = false;
+}
+function takePendingImage(){ const img = pendingImage; pendingImage = null; showAttachChip(); return img; }
+$('chat-attach').addEventListener('click', () => $('chat-image-file').click());
+$('chat-attach-clear').addEventListener('click', () => { pendingImage = null; showAttachChip(); });
+$('chat-image-file').addEventListener('change', async e => {
+  const file = e.target.files && e.target.files[0]; e.target.value = '';
+  if (!file) return;
+  try { const shot = await shrinkImage(file, 800, 0.85); pendingImage = Object.assign(shot, {name: file.name || 'picture'}); showAttachChip(); setStatus('chat', '', ''); }
+  catch (err) { setStatus('chat', 'picture failed: ' + err.message, 'err'); }
+});
+
 async function sendChat(){
-  const input = $('chat-input'); const text = input.value.trim(); if (!text) return;
+  const input = $('chat-input'); const text = input.value.trim();
+  const image = pendingImage;
+  if (!text && !image) return;
   input.value = '';
-  chatHistory.push({role: 'user', content: text}); renderChatHistory();
+  takePendingImage();
+  const content = image
+    ? (text ? [{type: 'text', text}, {type: 'image_url', image_url: {url: image.url}}] : [{type: 'image_url', image_url: {url: image.url}}])
+    : text;
+  chatHistory.push({role: 'user', content}); renderChatHistory();
   $('chat-send').disabled = true; $('chat-mic').disabled = true;
   setEntityState('thinking'); setLatestReply('', 'streaming'); setStatus('chat', 'thinking…', '');
   let reply = '';
   try {
     const r = await fetch('/api/chat', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({messages: chatHistory})});
-    if (!r.ok || !r.body) throw new Error('HTTP ' + r.status);
+    if (!r.ok || !r.body) throw new Error('HTTP ' + r.status + (r.status === 400 ? ': ' + await r.text() : ''));
     const reader = r.body.getReader(); const dec = new TextDecoder(); let buf = '';
     for (;;) {
       const {value, done} = await reader.read();
@@ -1613,6 +1679,8 @@ async function onRecordingStop(){
   const b64 = btoa(bin);
   setEntityState('thinking'); setStatus('chat', 'thinking…', ''); $('chat-mic').disabled = true; $('chat-send').disabled = true;
   try {
+    const image = takePendingImage();
+    if (image) { chatHistory.push({role: 'user', content: [{type: 'image_url', image_url: {url: image.url}}]}); renderChatHistory(); }
     const data = await sendJSON('/api/voice', 'POST', {messages: chatHistory, audio: b64});
     if (data.error) throw new Error(data.error);
     if (!data.transcript) { setLatestReply("I didn't catch that."); setEntityState('ready'); setStatus('chat', "didn't catch that", ''); return; }
