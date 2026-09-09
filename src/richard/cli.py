@@ -465,7 +465,7 @@ def _build_stt(config):
     return WhisperSTT(config.voice.stt_model)
 
 
-def _realtime_session_factory(config, *, brain, providers_fn, synth, transcriber, vad_factory):
+def _realtime_session_factory(config, *, brain, providers_fn, synth, transcriber, vad_factory, registry=None):
     """Build the per-connection session factory for /v1/realtime.
 
     One transcriber and one TTS engine are shared across sessions (models load
@@ -481,7 +481,7 @@ def _realtime_session_factory(config, *, brain, providers_fn, synth, transcriber
         engine = Engine(brain, providers_fn(), config.personality)
         return RealtimeSession(
             engine=engine, transcriber=transcriber, tts=synth,
-            detector=detector, emit=emit,
+            detector=detector, emit=emit, registry=registry,
         )
 
     return factory

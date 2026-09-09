@@ -541,3 +541,44 @@ def test_image_item_logs_telemetry(caplog):
         session.create_item({"kind": "message", "content": [{"type": "image_url", "image_url": {"url": IMG}}]})
     assert "vision: image source=client mime=image/jpeg" in caplog.text
     session.close()
+
+
+from richard.realtime.registry import SessionRegistry  # noqa: E402
+
+
+def test_session_registers_and_unregisters_itself():
+    reg = SessionRegistry()
+    session, emitted, done = collect_session(detector=ScriptedDetector([]), registry=reg)
+    assert reg.active() == [session]
+    session.close()
+    assert reg.active() == []
+
+
+def test_context_lines_become_one_perception_item_before_the_user_text():
+    engine = FakeEngine()
+    session, emitted, done = collect_session(engine=engine, detector=ScriptedDetector([]), clock_hm=lambda: "18:42")
+    session.add_context("matteo recognised (browser)")
+    session.add_context("the scene changed (browser)")
+    session.create_item({"kind": "message", "content": "hi"})
+    session.create_response()
+    wait(done)
+    seen = engine.seen[0]
+    # the typed item was appended when it arrived; the context is drained when the turn runs
+    assert seen[0] == ("user", "hi")
+    assert seen[1] == ("user", "[perception] 18:42 matteo recognised (browser)\n[perception] 18:42 the scene changed (browser)")
+    session.close()
+
+
+def test_queued_context_alone_makes_response_create_run_a_turn():
+    engine = FakeEngine()
+    session, emitted, done = collect_session(engine=engine, detector=ScriptedDetector([]), clock_hm=lambda: "18:42")
+    session.create_item({"kind": "message", "content": "hi"})
+    session.create_response()
+    wait(done)
+    done.clear()
+    session.add_context("someone entered (browser)")
+    session.create_response()
+    wait(done)
+    assert engine.seen[1][-1] == ("user", "[perception] 18:42 someone entered (browser)")
+    assert "response.audio.delta" in [e["type"] for e in emitted]
+    session.close()

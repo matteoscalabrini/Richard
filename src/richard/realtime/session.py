@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import queue
 import threading
+import time
 
 from richard import vision
 from richard.conversation import Conversation
@@ -27,7 +28,8 @@ NO_CLIENT_RESULT = "no result from client"
 
 class RealtimeSession:
     def __init__(self, *, engine, transcriber, tts, detector, emit,
-                 partial_every: int = 25, barge_in: str = "vad") -> None:
+                 partial_every: int = 25, barge_in: str = "vad",
+                 registry=None, clock_hm=lambda: time.strftime("%H:%M")) -> None:
         self._engine = engine
         self._transcriber = transcriber
         self._tts = tts
@@ -35,6 +37,12 @@ class RealtimeSession:
         self._emit = emit
         self._partial_every = partial_every
         self.barge_in = barge_in
+        # Context lines (perception) queued for the next turn, served as one user-role
+        # item before the user's own text. The registry lets the rest of serve find us.
+        self._registry = registry
+        self._clock_hm = clock_hm
+        self._context: list[str] = []
+        self._context_lock = threading.Lock()
         # Tools the connected client owns (the Reachy app's camera, the browser's
         # webcam), as chat-completions schemas. The engine defers their calls to us.
         self.client_tools: list[dict] = []
@@ -50,6 +58,8 @@ class RealtimeSession:
         self._input_item_id = ""
         self._audio_thread = threading.Thread(target=self._audio_worker, daemon=True)
         self._audio_thread.start()
+        if registry is not None:
+            registry.add(self)
 
     @property
     def samplerate(self) -> int:
@@ -81,6 +91,20 @@ class RealtimeSession:
             return
         raise ValueError(f"unsupported item kind: {item['kind']}")
 
+    def add_context(self, line: str) -> None:
+        """Queue a `[perception]` line for the next turn (any thread)."""
+        with self._context_lock:
+            self._context.append(f"[perception] {self._clock_hm()} {line}")
+
+    def _drain_context(self) -> str | None:
+        with self._context_lock:
+            lines, self._context = self._context, []
+        return "\n".join(lines) if lines else None
+
+    def _has_context(self) -> bool:
+        with self._context_lock:
+            return bool(self._context)
+
     def create_response(self) -> None:
         """Run a turn on the conversation as it stands (GA semantics)."""
         if self.state != "listening":
@@ -88,9 +112,9 @@ class RealtimeSession:
                                     code=events.ACTIVE_RESPONSE_CODE))
             return
         history = self.conversation.history()
-        nothing_new = not history or (
+        nothing_new = not self._has_context() and (not history or (
             history[-1].role == "assistant" and not self.conversation.pending_client_calls()
-        )
+        ))
         if nothing_new:
             response_id = events.new_id("resp")
             self._emit(events.response_created(response_id))
@@ -114,6 +138,8 @@ class RealtimeSession:
         }
 
     def close(self) -> None:
+        if self._registry is not None:
+            self._registry.remove(self)
         self._closed.set()
         self._interrupt.set()
         self._frames_q.put(None)
@@ -206,6 +232,9 @@ class RealtimeSession:
         # A call the client never answered would leave a tool call without a result in
         # the served prefix; seal it so the model sees the failure instead of a broken prompt.
         self.conversation.seal_pending(NO_CLIENT_RESULT)
+        context = self._drain_context()
+        if context:
+            self.conversation.add_user(context)
         if user_text is not None:
             self.conversation.add_user(user_text)
         response_id = events.new_id("resp")
