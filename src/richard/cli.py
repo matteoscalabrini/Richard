@@ -415,7 +415,22 @@ def _serve_deps_available(stt_engine: str = "remote", tts_engine: str = "remote"
 
 
 def _build_tts(config, write: Callable[[str], None]):
-    """Build the configured TTS engine: remote (GPU server), kokoro, or piper."""
+    """The configured TTS engine, wrapped in the configured voice effect if any."""
+    from richard.voice.effects import EFFECTS, EffectTTS, effect_from_config
+
+    engine = _build_tts_engine(config, write)
+    name = config.voice.tts_effect
+    if name == "none":
+        return engine
+    if name not in EFFECTS:
+        write(f"Unknown voice effect {name!r}; speaking without an effect.")
+        return engine
+    effect = effect_from_config(name, config.voice.tts_effect_strength, config.voice.tts_effect_tone)
+    return EffectTTS(engine, effect) if effect is not None else engine
+
+
+def _build_tts_engine(config, write: Callable[[str], None]):
+    """Build the configured TTS engine without post-processing: remote, kokoro, or piper."""
     engine = config.voice.tts_engine
     if engine == "remote":
         from richard.voice.remote import RemoteTTS

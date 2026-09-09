@@ -99,3 +99,18 @@ def effect_from_config(name: str, strength: int, tone_hz: float) -> RobotEffect 
     if name == "robot":
         return RobotEffect(strength=strength, tone_hz=tone_hz)
     return None
+
+
+class EffectTTS:
+    """Wraps any engine exposing `synth(text) -> bytes` and `samplerate`; applies the effect."""
+
+    def __init__(self, inner, effect: RobotEffect) -> None:
+        self._inner = inner
+        self._effect = effect
+
+    @property
+    def samplerate(self) -> int:
+        return self._inner.samplerate
+
+    def synth(self, text: str) -> bytes:
+        return self._effect.process(self._inner.synth(text), self._inner.samplerate)

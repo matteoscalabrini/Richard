@@ -441,3 +441,57 @@ def test_build_brain_passes_resolved_extra_body(monkeypatch):
     config.llm_extra_body = {"chat_template_kwargs": {"enable_thinking": False}}
     cli_mod._build_brain(config)
     assert seen["extra_body"] == {"chat_template_kwargs": {"enable_thinking": False}}
+
+
+def _fake_remote_engine(monkeypatch):
+    import richard.voice.remote as remote_mod
+
+    class FakeRemoteTTS:
+        samplerate = 24000
+
+        def __init__(self, endpoint, voice, **kwargs):
+            self.kwargs = kwargs
+
+        def synth(self, text):
+            return b"\x10\x00" * 2400
+
+    monkeypatch.setattr(remote_mod, "RemoteTTS", FakeRemoteTTS)
+    return FakeRemoteTTS
+
+
+def _remote_config():
+    from richard.config import Config
+
+    config = Config()
+    config.voice.tts_engine = "remote"
+    config.voice.tts_endpoint = "http://127.0.0.1:8091"
+    config.voice.tts_voice = "clap1"
+    return config
+
+
+def test_build_tts_returns_the_bare_engine_without_an_effect(monkeypatch):
+    fake = _fake_remote_engine(monkeypatch)
+    engine = cli._build_tts(_remote_config(), lambda s: None)
+    assert isinstance(engine, fake)
+
+
+def test_build_tts_wraps_the_engine_when_an_effect_is_set(monkeypatch):
+    from richard.voice.effects import EffectTTS
+
+    _fake_remote_engine(monkeypatch)
+    config = _remote_config()
+    config.voice.tts_effect = "robot"
+    engine = cli._build_tts(config, lambda s: None)
+    assert isinstance(engine, EffectTTS)
+    assert engine.samplerate == 24000
+    assert len(engine.synth("ciao")) == 4800
+
+
+def test_build_tts_unknown_effect_speaks_plain_and_says_so(monkeypatch):
+    fake = _fake_remote_engine(monkeypatch)
+    config = _remote_config()
+    config.voice.tts_effect = "vocoder"
+    lines = []
+    engine = cli._build_tts(config, lines.append)
+    assert isinstance(engine, fake)
+    assert lines == ["Unknown voice effect 'vocoder'; speaking without an effect."]

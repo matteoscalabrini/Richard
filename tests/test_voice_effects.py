@@ -88,3 +88,26 @@ def test_effect_from_config():
     robot = effect_from_config("robot", 30, 55.0)
     assert isinstance(robot, RobotEffect)
     assert robot.strength == 30 and robot.tone_hz == 55.0
+
+
+from richard.voice.effects import EffectTTS
+
+
+class _Engine:
+    samplerate = 24000
+
+    def __init__(self):
+        self.calls = []
+
+    def synth(self, text):
+        self.calls.append(text)
+        return _tone_mix()
+
+
+def test_effect_tts_forwards_samplerate_and_applies_effect():
+    engine = _Engine()
+    wrapped = EffectTTS(engine, RobotEffect(strength=50))
+    out = wrapped.synth("hello")
+    assert wrapped.samplerate == 24000
+    assert engine.calls == ["hello"]
+    assert len(out) == len(_tone_mix()) and out != _tone_mix()

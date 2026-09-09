@@ -376,3 +376,23 @@ def test_home_assistant_from_table_and_to_table():
     assert HomeAssistant.from_table({}).to_table() == {
         "host": "homeassistant.local", "port": 8123, "use_https": False, "timeout": 10.0, "verify_ssl": True,
     }
+
+
+def test_voice_effect_defaults_and_roundtrip(tmp_path):
+    cfg = Config()
+    assert (cfg.voice.tts_effect, cfg.voice.tts_effect_strength, cfg.voice.tts_effect_tone) == ("none", 50, 40.0)
+    cfg.voice.tts_effect = "robot"
+    cfg.voice.tts_effect_strength = 70
+    cfg.voice.tts_effect_tone = 55.0
+    path = tmp_path / "config.toml"
+    save_config(cfg, path)
+    v = load_config(path).voice
+    assert (v.tts_effect, v.tts_effect_strength, v.tts_effect_tone) == ("robot", 70, 55.0)
+
+
+def test_voice_effect_clamped_on_load(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text('[voice]\ntts_effect = "robot"\ntts_effect_strength = 250\ntts_effect_tone = 5\n')
+    v = load_config(path).voice
+    assert v.tts_effect_strength == 100
+    assert v.tts_effect_tone == 20.0

@@ -57,6 +57,9 @@ class Voice:
     tts_cfg_weight: float = 0.5  # CFG weight / pacing, 0.2–1.0
     tts_temperature: float = 0.8  # randomness, 0.05–1.5
     tts_speed: float = 1.0  # speed factor (1.0 = normal), 0.25–4.0
+    tts_effect: str = "none"  # post-processing on every spoken sentence: none | robot
+    tts_effect_strength: int = 50  # 0-100, drives ring-mod mix, bit crush and band-pass together
+    tts_effect_tone: float = 40.0  # ring-modulator frequency in Hz, 20-200
     vad_aggressiveness: int = 2
     silence_ms: int = 800
     samplerate: int = 16000
@@ -266,6 +269,9 @@ def load_config(path: Path | None = None) -> Config:
         tts_cfg_weight=float(v.get("tts_cfg_weight", Voice.tts_cfg_weight)),
         tts_temperature=float(v.get("tts_temperature", Voice.tts_temperature)),
         tts_speed=float(v.get("tts_speed", Voice.tts_speed)),
+        tts_effect=str(v.get("tts_effect", Voice.tts_effect)) or Voice.tts_effect,
+        tts_effect_strength=max(0, min(100, int(v.get("tts_effect_strength", Voice.tts_effect_strength)))),
+        tts_effect_tone=max(20.0, min(200.0, float(v.get("tts_effect_tone", Voice.tts_effect_tone)))),
         vad_aggressiveness=int(v.get("vad_aggressiveness", Voice.vad_aggressiveness)),
         silence_ms=int(v.get("silence_ms", Voice.silence_ms)),
         samplerate=int(v.get("samplerate", Voice.samplerate)),
@@ -407,6 +413,9 @@ def save_config(config: Config, path: Path | None = None) -> None:
         "tts_cfg_weight": config.voice.tts_cfg_weight,
         "tts_temperature": config.voice.tts_temperature,
         "tts_speed": config.voice.tts_speed,
+        "tts_effect": config.voice.tts_effect,
+        "tts_effect_strength": config.voice.tts_effect_strength,
+        "tts_effect_tone": config.voice.tts_effect_tone,
         "vad_aggressiveness": config.voice.vad_aggressiveness,
         "silence_ms": config.voice.silence_ms,
         "samplerate": config.voice.samplerate,
