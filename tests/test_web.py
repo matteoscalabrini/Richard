@@ -1366,3 +1366,10 @@ def test_voice_mode_registers_the_camera_tool_and_answers_calls(tmp_path):
     assert "type: 'function_call_output'" in html and "type: 'input_image'" in html
     assert "type: 'response.create'" in html
     assert "enum: ['low', 'high']" in html
+
+
+def test_attach_chip_stays_hidden_until_a_picture_is_chosen(tmp_path):
+    # `.attach-chip { display: flex }` outranks the UA's [hidden] rule; the page must re-hide it.
+    html = _app(tmp_path).handle("GET", "/").body.decode()
+    assert ".attach-chip[hidden] { display: none; }" in html
+    assert '<div class="attach-chip" id="chat-attach-chip" hidden>' in html

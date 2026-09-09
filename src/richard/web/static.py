@@ -144,6 +144,7 @@ SPA_HTML = r"""<!DOCTYPE html>
     display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.35rem; padding: 0.3rem 0.5rem;
     border: var(--pixel-border); background: var(--surface-light); font-size: 0.8rem;
   }
+  .attach-chip[hidden] { display: none; }  /* the class's display:flex would otherwise beat [hidden] */
   .attach-chip img { width: 36px; height: 36px; object-fit: cover; border: var(--pixel-border); }
   .attach-chip span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .attach-chip button { background: none; border: 0; color: var(--text-primary); cursor: pointer; font-size: 1rem; }
