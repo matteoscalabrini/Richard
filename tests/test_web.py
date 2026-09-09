@@ -829,26 +829,16 @@ def test_restart_unavailable_returns_503(tmp_path):
 # --- TTS server tuning knobs ---
 
 
-def test_get_config_exposes_tts_tuning(tmp_path):
+def test_config_api_has_no_chatterbox_knobs(tmp_path):
     app = _app(tmp_path)
     v = _body(app.handle("GET", "/api/config"))["voice"]
-    assert v["tts_exaggeration"] == 0.4
-    assert v["tts_cfg_weight"] == 0.5
-    assert v["tts_temperature"] == 0.8
-    assert v["tts_speed"] == 1.0
-
-
-def test_put_sets_and_clamps_tts_tuning(tmp_path):
-    app = _app(tmp_path)
-    app.handle("PUT", "/api/config", json.dumps({"voice": {"tts_exaggeration": 1.5, "tts_speed": 1.4}}).encode())
-    v = load_config(app._config_path).voice
-    assert v.tts_exaggeration == 1.5
-    assert v.tts_speed == 1.4
-    # out-of-range values clamp to the engine's accepted range
-    app.handle("PUT", "/api/config", json.dumps({"voice": {"tts_exaggeration": 9.0, "tts_cfg_weight": 0.0}}).encode())
-    v = load_config(app._config_path).voice
-    assert v.tts_exaggeration == 2.0
-    assert v.tts_cfg_weight == 0.2
+    for key in ("tts_exaggeration", "tts_cfg_weight", "tts_temperature", "tts_speed"):
+        assert key not in v
+    resp = app.handle("PUT", "/api/config", json.dumps({"voice": {"tts_speed": 1.4}}).encode())
+    assert _body(resp)["changed"] == []
+    html = app.handle("GET", "/").body.decode()
+    assert 'id="voice.tts_exaggeration"' not in html
+    assert "Chatterbox" not in html
 
 
 # --- chat (streaming) + icon ---

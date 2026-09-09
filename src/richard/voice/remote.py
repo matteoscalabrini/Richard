@@ -7,7 +7,7 @@ import httpx
 
 
 class RemoteTTS:
-    """TTS via an OpenAI-compatible /v1/audio/speech endpoint (Chatterbox server or vLLM-Omni/Qwen3-TTS).
+    """TTS via an OpenAI-compatible /v1/audio/speech endpoint (vLLM-Omni/Qwen3-TTS).
 
     Implements the same interface as PiperTTS/KokoroTTS (`synth` + `samplerate`) so it drops
     straight into SpeechPipeline. Needs only httpx — no heavy model deps on the client.
@@ -23,10 +23,6 @@ class RemoteTTS:
         instructions: str | None = None,
         x_vector_only: bool = False,
         task_type: str | None = None,
-        exaggeration: float | None = None,
-        cfg_weight: float | None = None,
-        temperature: float | None = None,
-        speed_factor: float | None = None,
         client: httpx.Client | None = None,
         timeout: float = 60.0,
     ) -> None:
@@ -38,13 +34,6 @@ class RemoteTTS:
         self._x_vector_only = x_vector_only
         # x-vector-only is a Base-task feature; imply Base unless the caller says otherwise.
         self._task_type = task_type or ("Base" if x_vector_only else None)
-        # Chatterbox generation knobs; only sent when set, else the server's defaults apply.
-        self._tuning = {
-            "exaggeration": exaggeration,
-            "cfg_weight": cfg_weight,
-            "temperature": temperature,
-            "speed_factor": speed_factor,
-        }
         self._client = client or httpx.Client(timeout=timeout)
         self._samplerate = 24000
 
@@ -67,7 +56,6 @@ class RemoteTTS:
             # Qwen3-TTS Base: timbre from the speaker embedding only, no in-context
             # imitation of the reference clip (keeps the voice, drops its accent).
             payload["x_vector_only_mode"] = True
-        payload.update({k: v for k, v in self._tuning.items() if v is not None})
         response = self._client.post(self._url, json=payload)
         response.raise_for_status()
         with wave.open(io.BytesIO(response.content), "rb") as w:

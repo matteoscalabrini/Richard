@@ -187,24 +187,12 @@ def test_system_prompt_roundtrip(tmp_path):
     assert load_config(path).personality.system_prompt == "You are a lighthouse keeper."
 
 
-def test_voice_tts_tuning_defaults():
-    v = Config().voice
-    assert v.tts_exaggeration == 0.4
-    assert v.tts_cfg_weight == 0.5
-    assert v.tts_temperature == 0.8
-    assert v.tts_speed == 1.0
-
-
-def test_voice_tts_tuning_roundtrip(tmp_path):
+def test_chatterbox_knobs_are_gone_and_ignored_in_old_files(tmp_path):
+    for name in ("tts_exaggeration", "tts_cfg_weight", "tts_temperature", "tts_speed"):
+        assert not hasattr(Config().voice, name)
     path = tmp_path / "config.toml"
-    cfg = Config()
-    cfg.voice.tts_exaggeration = 1.2
-    cfg.voice.tts_cfg_weight = 0.7
-    cfg.voice.tts_temperature = 0.5
-    cfg.voice.tts_speed = 1.3
-    save_config(cfg, path)
-    v = load_config(path).voice
-    assert (v.tts_exaggeration, v.tts_cfg_weight, v.tts_temperature, v.tts_speed) == (1.2, 0.7, 0.5, 1.3)
+    path.write_text('[voice]\ntts_exaggeration = 1.2\ntts_speed = 1.3\ntts_voice = "clap1"\n')
+    assert load_config(path).voice.tts_voice == "clap1"
 
 
 def test_brains_default_empty_and_resolve_falls_back_to_llm_settings():

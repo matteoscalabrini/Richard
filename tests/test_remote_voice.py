@@ -61,23 +61,16 @@ def test_remote_stt_blank_pcm_returns_empty_without_request():
     assert RemoteSTT("http://host", client=_client(handler)).transcribe(b"", 16000) == ""
 
 
-def test_remote_tts_sends_tuning_params():
+def test_remote_tts_sends_no_chatterbox_tuning_fields():
     captured = {}
 
     def handler(request):
         captured["json"] = json.loads(request.content)
         return httpx.Response(200, content=_wav(b"\x00\x00" * 10, 24000))
 
-    tts = RemoteTTS(
-        "http://host:8004", voice="tars", client=_client(handler),
-        exaggeration=0.7, cfg_weight=0.3, temperature=1.1, speed_factor=1.2,
-    )
-    tts.synth("hi")
-    j = captured["json"]
-    assert j["exaggeration"] == 0.7
-    assert j["cfg_weight"] == 0.3
-    assert j["temperature"] == 1.1
-    assert j["speed_factor"] == 1.2
+    RemoteTTS("http://host:8004", voice="tars", client=_client(handler)).synth("hi")
+    for key in ("exaggeration", "cfg_weight", "temperature", "speed_factor"):
+        assert key not in captured["json"]
 
 
 def test_remote_stt_transcribe_file_posts_multipart():

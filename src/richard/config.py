@@ -52,11 +52,6 @@ class Voice:
     tts_xvec_only: bool = False  # remote/Qwen3-TTS Base: x_vector_only_mode (timbre only, native prosody)
     tts_task_type: str = ""  # remote/Qwen3-TTS: Base | CustomVoice | VoiceDesign; blank = server default
     tts_streaming: bool = True  # speak sentence-by-sentence (low latency) vs whole-utterance
-    # Chatterbox generation knobs (remote TTS engine only); defaults match the server's.
-    tts_exaggeration: float = 0.4  # expressiveness, 0.25–2.0
-    tts_cfg_weight: float = 0.5  # CFG weight / pacing, 0.2–1.0
-    tts_temperature: float = 0.8  # randomness, 0.05–1.5
-    tts_speed: float = 1.0  # speed factor (1.0 = normal), 0.25–4.0
     tts_effect: str = "none"  # post-processing on every spoken sentence: none | robot
     tts_effect_strength: int = 50  # 0-100, drives ring-mod mix, bit crush and band-pass together
     tts_effect_tone: float = 40.0  # ring-modulator frequency in Hz, 20-200
@@ -265,10 +260,6 @@ def load_config(path: Path | None = None) -> Config:
         tts_xvec_only=bool(v.get("tts_xvec_only", Voice.tts_xvec_only)),
         tts_task_type=str(v.get("tts_task_type", Voice.tts_task_type)),
         tts_streaming=bool(v.get("tts_streaming", Voice.tts_streaming)),
-        tts_exaggeration=float(v.get("tts_exaggeration", Voice.tts_exaggeration)),
-        tts_cfg_weight=float(v.get("tts_cfg_weight", Voice.tts_cfg_weight)),
-        tts_temperature=float(v.get("tts_temperature", Voice.tts_temperature)),
-        tts_speed=float(v.get("tts_speed", Voice.tts_speed)),
         tts_effect=str(v.get("tts_effect", Voice.tts_effect)) or Voice.tts_effect,
         tts_effect_strength=max(0, min(100, int(v.get("tts_effect_strength", Voice.tts_effect_strength)))),
         tts_effect_tone=max(20.0, min(200.0, float(v.get("tts_effect_tone", Voice.tts_effect_tone)))),
@@ -409,10 +400,6 @@ def save_config(config: Config, path: Path | None = None) -> None:
         "tts_xvec_only": config.voice.tts_xvec_only,
         "tts_task_type": config.voice.tts_task_type,
         "tts_streaming": config.voice.tts_streaming,
-        "tts_exaggeration": config.voice.tts_exaggeration,
-        "tts_cfg_weight": config.voice.tts_cfg_weight,
-        "tts_temperature": config.voice.tts_temperature,
-        "tts_speed": config.voice.tts_speed,
         "tts_effect": config.voice.tts_effect,
         "tts_effect_strength": config.voice.tts_effect_strength,
         "tts_effect_tone": config.voice.tts_effect_tone,

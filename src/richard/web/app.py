@@ -103,10 +103,6 @@ def _config_to_dict(config: Config) -> dict:
             "tts_voice": config.voice.tts_voice,
             "tts_endpoint": config.voice.tts_endpoint,
             "tts_streaming": config.voice.tts_streaming,
-            "tts_exaggeration": config.voice.tts_exaggeration,
-            "tts_cfg_weight": config.voice.tts_cfg_weight,
-            "tts_temperature": config.voice.tts_temperature,
-            "tts_speed": config.voice.tts_speed,
             "vad_aggressiveness": config.voice.vad_aggressiveness,
             "silence_ms": config.voice.silence_ms,
             "samplerate": config.voice.samplerate,
@@ -332,18 +328,6 @@ def _apply_config_update(config: Config, patch: dict) -> list[str]:
         if "tts_streaming" in v:
             config.voice.tts_streaming = _as_bool(v["tts_streaming"])
             changed.append("voice.tts_streaming")
-        if "tts_exaggeration" in v:
-            config.voice.tts_exaggeration = _clamp_float(v["tts_exaggeration"], 0.25, 2.0)
-            changed.append("voice.tts_exaggeration")
-        if "tts_cfg_weight" in v:
-            config.voice.tts_cfg_weight = _clamp_float(v["tts_cfg_weight"], 0.2, 1.0)
-            changed.append("voice.tts_cfg_weight")
-        if "tts_temperature" in v:
-            config.voice.tts_temperature = _clamp_float(v["tts_temperature"], 0.05, 1.5)
-            changed.append("voice.tts_temperature")
-        if "tts_speed" in v:
-            config.voice.tts_speed = _clamp_float(v["tts_speed"], 0.25, 4.0)
-            changed.append("voice.tts_speed")
         if "vad_aggressiveness" in v:
             config.voice.vad_aggressiveness = max(0, min(3, _as_int(v["vad_aggressiveness"], 2)))
             changed.append("voice.vad_aggressiveness")

@@ -565,15 +565,6 @@ SPA_HTML = r"""<!DOCTYPE html>
         </div>
         <div class="setting-group"><label class="setting-label">TTS endpoint</label><input id="voice.tts_endpoint" class="setting-input" placeholder="http://host:8004 (remote only)"></div>
         <div class="setting-group"><div class="checkbox-btn"><input type="checkbox" id="voice.tts_streaming"><label for="voice.tts_streaming">Stream speech sentence-by-sentence</label><span class="checkmark"></span></div></div>
-        <div class="setting-group"><label class="setting-label">TTS tuning — remote (Chatterbox) engine only</label><span class="lede" style="margin:0;">How the voice sounds. Ignored by kokoro/piper. Applies after a reboot.</span></div>
-        <div class="field-row">
-          <div class="setting-group"><label class="setting-label">Exaggeration (0.25–2.0)</label><input id="voice.tts_exaggeration" type="number" min="0.25" max="2.0" step="0.05" class="setting-input"></div>
-          <div class="setting-group"><label class="setting-label">CFG weight (0.2–1.0)</label><input id="voice.tts_cfg_weight" type="number" min="0.2" max="1.0" step="0.05" class="setting-input"></div>
-        </div>
-        <div class="field-row">
-          <div class="setting-group"><label class="setting-label">Temperature (0.05–1.5)</label><input id="voice.tts_temperature" type="number" min="0.05" max="1.5" step="0.05" class="setting-input"></div>
-          <div class="setting-group"><label class="setting-label">Speed (0.25–4.0, 1.0 = normal)</label><input id="voice.tts_speed" type="number" min="0.25" max="4.0" step="0.05" class="setting-input"></div>
-        </div>
         <div class="field-row">
           <div class="setting-group"><label class="setting-label">VAD aggressiveness (0–3)</label><input id="voice.vad_aggressiveness" type="number" min="0" max="3" class="setting-input"></div>
           <div class="setting-group"><label class="setting-label">Silence (ms)</label><input id="voice.silence_ms" type="number" min="0" class="setting-input"></div>
@@ -753,10 +744,6 @@ const FIELDS = [
   {id:'voice.tts_voice', path:['voice','tts_voice'], t:'text', sec:'voice'},
   {id:'voice.tts_endpoint', path:['voice','tts_endpoint'], t:'url', sec:'voice', nullable:true},
   {id:'voice.tts_streaming', path:['voice','tts_streaming'], t:'bool', sec:'voice'},
-  {id:'voice.tts_exaggeration', path:['voice','tts_exaggeration'], t:'num', sec:'voice', min:0.25, max:2.0},
-  {id:'voice.tts_cfg_weight', path:['voice','tts_cfg_weight'], t:'num', sec:'voice', min:0.2, max:1.0},
-  {id:'voice.tts_temperature', path:['voice','tts_temperature'], t:'num', sec:'voice', min:0.05, max:1.5},
-  {id:'voice.tts_speed', path:['voice','tts_speed'], t:'num', sec:'voice', min:0.25, max:4.0},
   {id:'voice.vad_aggressiveness', path:['voice','vad_aggressiveness'], t:'num', sec:'voice', min:0, max:3},
   {id:'voice.silence_ms', path:['voice','silence_ms'], t:'num', sec:'voice', min:0},
   {id:'voice.samplerate', path:['voice','samplerate'], t:'num', sec:'voice', min:8000},

@@ -442,10 +442,6 @@ def _build_tts_engine(config, write: Callable[[str], None]):
             instructions=config.voice.tts_instructions or None,
             x_vector_only=config.voice.tts_xvec_only,
             task_type=config.voice.tts_task_type or None,
-            exaggeration=config.voice.tts_exaggeration,
-            cfg_weight=config.voice.tts_cfg_weight,
-            temperature=config.voice.tts_temperature,
-            speed_factor=config.voice.tts_speed,
         )
     if engine == "piper":
         from richard.voice.tts import PiperTTS, ensure_voice
