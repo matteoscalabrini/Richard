@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import subprocess
+import sys
 from pathlib import Path
 from typing import Callable
 
 from richard import __version__
 from richard.brain.llama_cpp import LlamaCppBrain
-from richard.config import apply_home_assistant_url, clamp_dial, load_config, save_config
+from richard.config import apply_home_assistant_url, clamp_dial, default_plugins_dir, load_config, save_config
 from richard.conversation import Conversation
 from richard.engine import Engine
 from richard.memory import MemoryStore, default_memory_path
@@ -103,6 +105,16 @@ def _build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("voice", help="Talk to Richard (push-to-talk voice)")
     sub.add_parser("serve", help="Run the always-on host: voice satellites, realtime API, web UI")
+
+    plugins_parser = sub.add_parser("plugins", help="List, enable, disable, configure or install plugins")
+    plugins_sub = plugins_parser.add_subparsers(dest="plugins_command", required=True)
+    plugins_sub.add_parser("list", help="Installed plugins and their state")
+    plugins_sub.add_parser("enable", help="Enable a plugin").add_argument("name")
+    plugins_sub.add_parser("disable", help="Disable a plugin").add_argument("name")
+    config_p = plugins_sub.add_parser("config", help="Set plugin settings: key=value ...")
+    config_p.add_argument("name")
+    config_p.add_argument("pairs", nargs="+", metavar="key=value")
+    plugins_sub.add_parser("install", help="pip install a plugin (folder = editable, else pypi name or git url)").add_argument("target")
 
     setup_parser = sub.add_parser("setup", help="Install/configure this box as a Richard brain")
     setup_parser.add_argument("--llm-url", metavar="URL", help="OpenAI-compatible LLM base URL")
@@ -233,6 +245,80 @@ def _run_config(args: argparse.Namespace, write: Callable[[str], None] = print) 
         )
         write(f"web:          {'on' if config.web.enabled else 'off'} {config.web.host}:{config.web.port}")
     return 0
+
+
+def _parse_plugin_value(text: str) -> object:
+    lowered = text.strip().lower()
+    if lowered in ("on", "true", "yes"):
+        return True
+    if lowered in ("off", "false", "no"):
+        return False
+    try:
+        return int(text)
+    except ValueError:
+        pass
+    try:
+        return float(text)
+    except ValueError:
+        return text
+
+
+def _install_command(target: str | Path, *, python: str = sys.executable) -> list[str]:
+    target_path = Path(str(target)).expanduser()
+    if target_path.is_dir():
+        return [python, "-m", "pip", "install", "-e", str(target_path)]
+    return [python, "-m", "pip", "install", str(target)]
+
+
+def _run_plugins(args: argparse.Namespace, write: Callable[[str], None] = print) -> int:
+    from richard.plugins.registry import PluginRegistry
+
+    config = load_config()
+    registry = PluginRegistry()
+    registry.discover()
+    installed = {record.name: record for record in registry.records()}
+    if args.plugins_command == "list":
+        registry.build(
+            config.plugins.enabled, config.plugins.tables,
+            persona_name=config.personality.name, data_dir=default_plugins_dir(), write=lambda s: None,
+        )
+        for record in registry.records():
+            detail = f" ({record.error})" if record.error else ""
+            write(f"{record.name:<20} {record.version:<10} {record.status}{detail}  [{record.module}]")
+        if not registry.records():
+            write("No plugins installed.")
+        return 0
+    if args.plugins_command in ("enable", "disable"):
+        if args.plugins_command == "enable" and args.name not in installed:
+            write(f"Plugin {args.name} is not installed (richard plugins list).")
+            return 1
+        enabled = [name for name in config.plugins.enabled if name != args.name]
+        if args.plugins_command == "enable":
+            enabled.append(args.name)
+        config.plugins.enabled = enabled
+        save_config(config)
+        write(f"{args.name} {args.plugins_command}d. Restart Richard to apply.")
+        return 0
+    if args.plugins_command == "config":
+        table = config.plugins.table(args.name)
+        for pair in args.pairs:
+            key, separator, value = pair.partition("=")
+            if not separator or not key:
+                write(f"Expected key=value, got {pair!r}.")
+                return 1
+            table[key.strip()] = _parse_plugin_value(value)
+        save_config(config)
+        write(f"{args.name}: " + ", ".join(f"{k}={v}" for k, v in table.items() if k != "token"))
+        return 0
+    if args.plugins_command == "install":
+        command = _install_command(args.target)
+        write("$ " + " ".join(command))
+        completed = subprocess.run(command)
+        if completed.returncode != 0:
+            return completed.returncode
+        write("Installed. Enable it with: richard plugins enable <name>")
+        return 0
+    return 2
 
 
 def _run_memory(args: argparse.Namespace, write: Callable[[str], None] = print) -> int:
@@ -770,6 +856,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_setup(args)
     if args.command == "memory":
         return _run_memory(args)
+    if args.command == "plugins":
+        return _run_plugins(args)
     if args.command == "voice":
         return _run_voice()
     if args.command == "serve":
