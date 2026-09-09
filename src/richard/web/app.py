@@ -26,7 +26,7 @@ from datetime import date
 from pathlib import Path
 from typing import Callable
 
-from richard import __version__
+from richard import __version__, vision
 from richard.config import (
     Config,
     apply_home_assistant_url,
@@ -34,9 +34,9 @@ from richard.config import (
     load_config,
     save_config,
 )
-from richard.conversation import Conversation
+from richard.conversation import Conversation, Message, user_parts
 from richard.control_loops import ControlLoopStore, ControlTargetReader
-from richard.errors import BrainUnreachable, HomeAssistantError
+from richard.errors import BrainRejectedInput, BrainUnreachable, HomeAssistantError
 from richard.plugins.home_assistant.client import HomeAssistantClient
 from richard.memory import MemoryStore
 from richard.persona import BASE_CHARACTER
@@ -47,6 +47,9 @@ from richard.web.static import SPA_HTML
 
 _VOICE_NAME_RE = re.compile(r"[A-Za-z0-9_-]{1,32}")
 _MAX_VOICE_SAMPLE_BYTES = 8 * 1024 * 1024
+
+BRAIN_DOWN_LINE = "I can't reach my brain right now."
+IMAGE_REJECTED_LINE = "I couldn't take that picture in."
 
 _ICON_PATH = Path(__file__).with_name("icon.png")
 
@@ -233,14 +236,47 @@ def _sse(payload: dict) -> str:
     return f"data: {json.dumps(payload)}\n\n"
 
 
+def _user_content(content):
+    """A string, or a list of chat-completions parts with validated images.
+
+    Raises ValueError with a message fit for a 400.
+    """
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        raise ValueError("message content must be a string or a list of parts")
+    texts: list[str] = []
+    images: list[str] = []
+    for part in content:
+        if not isinstance(part, dict):
+            raise ValueError("content parts must be objects")
+        if part.get("type") == "text" and isinstance(part.get("text"), str):
+            texts.append(part["text"].strip())
+        elif part.get("type") == "image_url":
+            ref = part.get("image_url")
+            url = ref.get("url") if isinstance(ref, dict) else None
+            vision.check_image_data_url(url)
+            images.append(url)
+        else:
+            raise ValueError("unsupported content part")
+    text = " ".join(t for t in texts if t).strip()
+    if not images:
+        return text
+    return user_parts(text or None, images)
+
+
 def _conversation_from_messages(messages) -> Conversation:
+    """Build the conversation the browser holds. Raises ValueError on bad content."""
     convo = Conversation()
     for m in messages or []:
         role, content = m.get("role"), m.get("content", "")
         if role == "user":
-            convo.add_user(content)
+            convo.add_user(_user_content(content))
         elif role == "assistant":
-            convo.add_assistant(content)
+            convo.add_assistant(content if isinstance(content, str) else Message("assistant", content).text())
+    images = vision.count_images(convo.history())
+    if images:
+        vision.log_history("web", images)
     return convo
 
 
@@ -267,8 +303,10 @@ def _voice_turn(transcribe, engine, synth, messages, audio_bytes) -> dict:
     convo.add_user(transcript)
     try:
         reply = engine.respond(convo)
+    except BrainRejectedInput:
+        reply = IMAGE_REJECTED_LINE
     except BrainUnreachable:
-        reply = "I can't reach my brain right now."
+        reply = BRAIN_DOWN_LINE
     wav = _pcm_to_wav(synth.synth(reply), getattr(synth, "samplerate", 24000))
     audio = "data:audio/wav;base64," + base64.b64encode(wav).decode()
     return {"transcript": transcript, "reply": reply, "audio": audio}
@@ -284,8 +322,10 @@ def _chat_sse_events(engine, messages) -> Iterator[str]:
         for delta in engine.respond_streaming(convo):
             if delta:
                 yield _sse({"delta": delta})
+    except BrainRejectedInput:
+        yield _sse({"error": IMAGE_REJECTED_LINE})
     except BrainUnreachable:
-        yield _sse({"error": "I can't reach my brain right now."})
+        yield _sse({"error": BRAIN_DOWN_LINE})
     yield _sse({"done": True})
 
 
@@ -1022,6 +1062,12 @@ async def _serve_chat(app: WebApp, body: bytes, writer) -> None:
         writer.write(_format_response(Response.bad_request("invalid JSON"), False))
         await writer.drain()
         return
+    try:
+        _conversation_from_messages(messages)  # validate before committing to a 200 stream
+    except ValueError as exc:
+        writer.write(_format_response(Response.bad_request(str(exc)), False))
+        await writer.drain()
+        return
 
     writer.write(
         b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n"
@@ -1065,6 +1111,7 @@ async def _serve_voice(app: WebApp, body: bytes, writer) -> None:
         payload = json.loads(body or b"{}") or {}
         messages = payload.get("messages", [])
         audio = base64.b64decode(payload.get("audio", "") or "")
+        _conversation_from_messages(messages)  # a bad image is a 400, not a failed turn
     except (ValueError, TypeError) as exc:
         writer.write(_format_response(Response.bad_request(f"invalid request: {exc}"), False))
         await writer.drain()

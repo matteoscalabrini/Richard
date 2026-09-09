@@ -1228,3 +1228,121 @@ def test_web_ui_field_hints_dividers_and_symmetric_menu_icon(tmp_path):
     assert "translateY(9px) rotate(45deg)" in html and "translateY(-9px) rotate(-45deg)" in html
     assert "translateX(4px)" not in html
     assert "transform-origin: center" in html
+
+
+# --- vision: content parts on chat and voice ---
+
+_IMG = "data:image/jpeg;base64,/9j/4AAQ"
+
+
+def test_conversation_from_messages_accepts_parts_and_validates_images():
+    from richard.web.app import _conversation_from_messages
+    convo = _conversation_from_messages([
+        {"role": "user", "content": [{"type": "text", "text": "what is this?"},
+                                     {"type": "image_url", "image_url": {"url": _IMG}}]},
+        {"role": "assistant", "content": "A mug."},
+        {"role": "user", "content": [{"type": "image_url", "image_url": {"url": _IMG}}]},
+    ])
+    hist = [m.to_chat() for m in convo.history()]
+    assert hist[0]["content"] == [{"type": "text", "text": "what is this?"},
+                                  {"type": "image_url", "image_url": {"url": _IMG}}]
+    assert hist[1] == {"role": "assistant", "content": "A mug."}
+    assert hist[2]["content"] == [{"type": "image_url", "image_url": {"url": _IMG}}]
+
+
+@pytest.mark.parametrize("content,fragment", [
+    ([{"type": "image_url", "image_url": {"url": "http://x/y.jpg"}}], "data:image"),
+    ([{"type": "audio", "data": "x"}], "unsupported"),
+    (["not a part"], "objects"),
+    (42, "string or a list"),
+])
+def test_conversation_from_messages_rejects_bad_content(content, fragment):
+    from richard.web.app import _conversation_from_messages
+    with pytest.raises(ValueError, match=fragment):
+        _conversation_from_messages([{"role": "user", "content": content}])
+
+
+def test_chat_endpoint_400_on_bad_image(tmp_path):
+    config_path = tmp_path / "config.toml"
+    save_config(Config(), config_path)
+    app = WebApp(config_path=config_path, memory_store=MemoryStore(":memory:"), relays=RelayRegistry(),
+                 engine_factory=lambda: _FakeEngine(["never"]))
+    from richard.web.app import _serve_chat
+    w = _FakeWriter()
+    body = json.dumps({"messages": [{"role": "user", "content": [
+        {"type": "image_url", "image_url": {"url": "data:image/gif;base64,R0lG"}}]}]}).encode()
+    asyncio.run(_serve_chat(app, body, w))
+    blob = b"".join(w.chunks)
+    assert blob.startswith(b"HTTP/1.1 400")
+    assert b"text/event-stream" not in blob
+
+
+def test_chat_endpoint_streams_with_an_attached_image(tmp_path):
+    config_path = tmp_path / "config.toml"
+    save_config(Config(), config_path)
+    seen = {}
+
+    class Eng:
+        def respond_streaming(self, conversation):
+            seen["hist"] = [m.to_chat() for m in conversation.history()]
+            yield "A mug."
+
+    app = WebApp(config_path=config_path, memory_store=MemoryStore(":memory:"), relays=RelayRegistry(),
+                 engine_factory=lambda: Eng())
+    from richard.web.app import _serve_chat
+    w = _FakeWriter()
+    body = json.dumps({"messages": [{"role": "user", "content": [
+        {"type": "text", "text": "what"}, {"type": "image_url", "image_url": {"url": _IMG}}]}]}).encode()
+    asyncio.run(_serve_chat(app, body, w))
+    assert 'data: {"delta": "A mug."}' in b"".join(w.chunks).decode()
+    assert seen["hist"][0]["content"][1]["type"] == "image_url"
+
+
+def test_chat_sse_events_rejected_image_yields_its_line():
+    from richard.errors import BrainRejectedInput
+    from richard.web.app import _chat_sse_events
+
+    class Rejecting:
+        def respond_streaming(self, conversation):
+            raise BrainRejectedInput("400")
+            yield  # pragma: no cover
+
+    ev = list(_chat_sse_events(Rejecting(), [{"role": "user", "content": "hi"}]))
+    assert ev[0] == 'data: {"error": "I couldn\'t take that picture in."}\n\n'
+    assert ev[-1] == 'data: {"done": true}\n\n'
+
+
+def test_voice_turn_carries_an_attached_image_before_the_transcript():
+    from richard.web.app import _voice_turn
+    eng = _RespEngine("A mug.")
+    messages = [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": _IMG}}]}]
+    out = _voice_turn(lambda b: "what is this", eng, _FakeSynth(), messages, b"audio")
+    assert out["reply"] == "A mug."
+    hist = [m.to_chat() for m in eng.seen.history()]
+    assert hist[0]["content"][0]["type"] == "image_url"
+    assert hist[1] == {"role": "user", "content": "what is this"}
+
+
+def test_voice_turn_rejected_image_line():
+    from richard.errors import BrainRejectedInput
+    from richard.web.app import _voice_turn
+
+    class Rejecting:
+        def respond(self, conversation):
+            raise BrainRejectedInput("400")
+
+    out = _voice_turn(lambda b: "look", Rejecting(), _FakeSynth(), [], b"x")
+    assert out["reply"] == "I couldn't take that picture in."
+
+
+def test_voice_endpoint_400_on_bad_image(tmp_path):
+    config_path = tmp_path / "config.toml"
+    save_config(Config(), config_path)
+    app = WebApp(config_path=config_path, memory_store=MemoryStore(":memory:"), relays=RelayRegistry(),
+                 voice_turn=lambda messages, audio: {"transcript": "x", "reply": "y", "audio": None})
+    from richard.web.app import _serve_voice
+    w = _FakeWriter()
+    body = json.dumps({"messages": [{"role": "user", "content": [
+        {"type": "image_url", "image_url": {"url": "nope"}}]}], "audio": ""}).encode()
+    asyncio.run(_serve_voice(app, body, w))
+    assert b"".join(w.chunks).startswith(b"HTTP/1.1 400")
