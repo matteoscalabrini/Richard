@@ -260,18 +260,16 @@ def _run_chat() -> int:
     store = MemoryStore(default_memory_path())
     monitor = None
     control_store = None
+    registry = None
     try:
-        providers = [MemoryProvider(store)]
-        home_assistant = _build_home_assistant_provider(config)
-        if home_assistant is not None:
-            providers.append(home_assistant)
-            providers.append(
-                DiagnosticsProvider(_build_diagnostics(home_assistant))
-            )
-        control_store, control_reader, control_provider = _build_control_loops(
-            home_assistant
+        registry = _build_plugins(config)
+        control_store, control_reader, control_provider = _build_control_loops(registry)
+        providers = _engine_providers(
+            memory_provider=MemoryProvider(store),
+            plugin_providers=[*registry.providers(), ContextLinesProvider(registry.context_lines())],
+            control_provider=control_provider,
+            diagnostics=_build_diagnostics(registry),
         )
-        providers.append(control_provider)
         engine = Engine(
             brain,
             providers,
@@ -282,6 +280,8 @@ def _run_chat() -> int:
         )
         run_repl(engine, Conversation())
     finally:
+        if registry is not None:
+            registry.shutdown()
         monitor_stopped = True
         if monitor is not None:
             monitor_stopped = monitor.stop()
@@ -397,65 +397,61 @@ async def _serve_realtime_guarded(serve_coro, write):
         write(f"Realtime API disabled ({exc})")
 
 
-def _build_home_assistant_provider(config, write: Callable[[str], None] = print):
-    """Build the optional Home Assistant provider from config."""
-    ha = config.home_assistant
-    if not ha.enabled:
-        return None
-    if not ha.host or not ha.token:
-        write(
-            "Home Assistant is enabled but its host or token is unset; "
-            "configure both before restarting Richard."
-        )
-        return None
-    from richard.plugins.home_assistant.client import HomeAssistantClient
-    from richard.plugins.home_assistant.provider import HomeAssistantProvider
+class ContextLinesProvider:
+    """Carries the enabled plugins' capability lines into the system prompt; no tools."""
 
-    client = HomeAssistantClient(
-        ha.url,
-        ha.token,
-        timeout=ha.timeout,
-        verify_ssl=ha.verify_ssl,
+    def __init__(self, lines: list[str]) -> None:
+        self._lines = list(lines)
+
+    def schemas(self) -> list[dict]:
+        return []
+
+    def execute(self, name: str, arguments: dict) -> str:
+        return f"Unknown tool: {name}."
+
+    def context(self) -> str | None:
+        return "\n".join(self._lines) or None
+
+
+def _build_plugins(config, write: Callable[[str], None] = print):
+    """Discover installed plugins and build the enabled ones. Never raises for a plugin."""
+    from richard.config import default_plugins_dir
+    from richard.plugins.registry import PluginRegistry
+
+    registry = PluginRegistry()
+    registry.discover()
+    registry.build(
+        config.plugins.enabled, config.plugins.tables,
+        persona_name=config.personality.name, data_dir=default_plugins_dir(), write=write,
     )
-    return HomeAssistantProvider(client)
+    return registry
 
 
-def _build_diagnostics(home_assistant=None):
-    """One diagnostics service per runtime assembly."""
+def _build_diagnostics(registry):
+    """One diagnostics service per runtime assembly; None when nothing can be read."""
     from richard.diagnostics import DiagnosticsService
-    from richard.plugins.home_assistant.reader import HomeAssistantTargetReader
 
-    client = home_assistant.client if home_assistant is not None else None
-    readers = {"ha": HomeAssistantTargetReader(client)} if client is not None else {}
-    return DiagnosticsService(readers=readers)
+    readers = registry.target_readers()
+    if not readers:
+        return None
+    return DiagnosticsProvider(DiagnosticsService(readers=readers))
 
 
-def _engine_providers(*, memory_provider, home_assistant, control_provider, diagnostics):
-    """The provider list shared by the serve-mode chat, web, and control-loop engines."""
-    providers = [memory_provider]
-    if home_assistant is not None:
-        providers.append(home_assistant)
-    providers.append(control_provider)
+def _engine_providers(*, memory_provider, plugin_providers, control_provider, diagnostics):
+    """The provider list shared by every engine: memory, plugins, loops, diagnostics."""
+    providers = [memory_provider, *plugin_providers, control_provider]
     if diagnostics is not None:
         providers.append(diagnostics)
     return providers
 
 
-def _build_control_loops(home_assistant=None):
+def _build_control_loops(registry):
     """Build the shared persistent loop store, target reader, and LLM tools."""
-    from richard.control_loops import (
-        ControlLoopStore,
-        ControlTargetReader,
-        default_control_loops_path,
-    )
+    from richard.control_loops import ControlLoopStore, ControlTargetReader, default_control_loops_path
     from richard.providers.control_loop import ControlLoopProvider
 
-    from richard.plugins.home_assistant.reader import HomeAssistantTargetReader
-
-    client = home_assistant.client if home_assistant is not None else None
     store = ControlLoopStore(default_control_loops_path())
-    readers = {"ha": HomeAssistantTargetReader(client)} if client is not None else {}
-    reader = ControlTargetReader(readers=readers)
+    reader = ControlTargetReader(readers=registry.target_readers())
     return store, reader, ControlLoopProvider(store, reader)
 
 
@@ -500,18 +496,16 @@ def _run_voice(write: Callable[[str], None] = print) -> int:
     speech = None
     monitor = None
     control_store = None
+    registry = None
     try:
-        providers = [MemoryProvider(store)]
-        home_assistant = _build_home_assistant_provider(config, write)
-        if home_assistant is not None:
-            providers.append(home_assistant)
-            providers.append(
-                DiagnosticsProvider(_build_diagnostics(home_assistant))
-            )
-        control_store, control_reader, control_provider = _build_control_loops(
-            home_assistant
+        registry = _build_plugins(config, write)
+        control_store, control_reader, control_provider = _build_control_loops(registry)
+        providers = _engine_providers(
+            memory_provider=MemoryProvider(store),
+            plugin_providers=[*registry.providers(), ContextLinesProvider(registry.context_lines())],
+            control_provider=control_provider,
+            diagnostics=_build_diagnostics(registry),
         )
-        providers.append(control_provider)
         engine = Engine(
             brain, providers, config.personality
         )
@@ -549,6 +543,8 @@ def _run_voice(write: Callable[[str], None] = print) -> int:
             write=write,
         )
     finally:
+        if registry is not None:
+            registry.shutdown()
         monitor_stopped = True
         try:
             if monitor is not None:
@@ -585,14 +581,13 @@ def _run_serve(write: Callable[[str], None] = print) -> int:
     memory_store = MemoryStore(default_memory_path())
     memory_provider = MemoryProvider(memory_store)
     relays = RelayRegistry()
-    home_assistant = _build_home_assistant_provider(config, write)
+    registry = _build_plugins(config, write)
 
-    control_store, control_reader, control_provider = _build_control_loops(home_assistant)
+    control_store, control_reader, control_provider = _build_control_loops(registry)
     # One diagnostics service for the whole serve assembly: satellite turns and the
-    # chat engines all check through the same live Home Assistant inventory.
-    diagnostics_provider = None
-    if home_assistant is not None:
-        diagnostics_provider = DiagnosticsProvider(_build_diagnostics(home_assistant))
+    # chat engines all check through the same live target sources.
+    diagnostics_provider = _build_diagnostics(registry)
+    plugin_providers = [*registry.providers(), ContextLinesProvider(registry.context_lines())]
 
     import asyncio
     from richard.satellite.server import serve
@@ -601,7 +596,7 @@ def _run_serve(write: Callable[[str], None] = print) -> int:
         personality=config.personality, stt=stt, synthesizer=synth,
         relays=relays,
         extra_providers=[
-            *([home_assistant] if home_assistant is not None else []),
+            *plugin_providers,
             control_provider,
             *([diagnostics_provider] if diagnostics_provider is not None else []),
         ],
@@ -619,7 +614,7 @@ def _run_serve(write: Callable[[str], None] = print) -> int:
     def _serve_providers():
         return _engine_providers(
             memory_provider=memory_provider,
-            home_assistant=home_assistant,
+            plugin_providers=plugin_providers,
             control_provider=control_provider,
             diagnostics=diagnostics_provider,
         )
@@ -731,6 +726,7 @@ def _run_serve(write: Callable[[str], None] = print) -> int:
     try:
         asyncio.run(_serve_all())
     finally:
+        registry.shutdown()
         if monitor.stop():
             control_store.close()
     return 0

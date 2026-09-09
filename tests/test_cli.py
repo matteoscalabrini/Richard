@@ -177,27 +177,28 @@ def test_config_sets_home_assistant_fields(tmp_path, monkeypatch):
     assert load_config(path).plugins.enabled == ["home_assistant"]
 
 
-def test_home_assistant_provider_requires_enabled_complete_config():
-    from richard import cli
+def test_build_plugins_reports_a_plugin_that_cannot_build(tmp_path, monkeypatch):
     from richard.config import Config, HomeAssistant
 
-    cfg = Config()
-    assert cli._build_home_assistant_provider(cfg, write=lambda s: None) is None
-    cfg.set_home_assistant(HomeAssistant(enabled=True))
-    messages = []
-    assert cli._build_home_assistant_provider(cfg, write=messages.append) is None
-    assert "host or token is unset" in messages[0]
+    monkeypatch.setenv("HOME", str(tmp_path))
+    config = Config()
+    config.set_home_assistant(HomeAssistant(enabled=True, host="", token=None))
+    lines = []
+    registry = cli._build_plugins(config, lines.append)
+    assert lines == ["Plugin home_assistant disabled (host or token unset; configure both before restarting Richard)"]
+    assert registry.providers() == []
 
 
-def test_home_assistant_provider_builds_when_configured():
-    from richard import cli
+def test_build_plugins_wires_home_assistant_when_configured(tmp_path, monkeypatch):
     from richard.config import Config, HomeAssistant
-    from richard.plugins.home_assistant.provider import HomeAssistantProvider
 
-    cfg = Config()
-    cfg.set_home_assistant(HomeAssistant(enabled=True, token="secret"))
-    provider = cli._build_home_assistant_provider(cfg, write=lambda s: None)
-    assert isinstance(provider, HomeAssistantProvider)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    config = Config()
+    config.set_home_assistant(HomeAssistant(enabled=True, host="ha.local", token="t"))
+    registry = cli._build_plugins(config, lambda s: None)
+    assert [type(p).__name__ for p in registry.providers()] == ["HomeAssistantProvider"]
+    assert list(registry.target_readers()) == ["ha"]
+    assert registry.context_lines() == ["Home Assistant is connected at http://ha.local:8123."]
 
 
 def test_run_voice_errors_on_remote_without_endpoint(monkeypatch):
@@ -274,43 +275,30 @@ def test_run_chat_engine_skips_diagnostics_without_home_assistant(tmp_path, monk
     assert "ControlLoopProvider" in provider_names
 
 
-def test_serve_engine_providers_order_and_diagnostics():
+def test_engine_providers_order():
     providers = cli._engine_providers(
-        memory_provider="memory",
-        home_assistant=None,
-        control_provider="loops",
-        diagnostics="diagnostics",
+        memory_provider="memory", plugin_providers=["ha", "reachy"], control_provider="loops", diagnostics="diagnostics",
     )
-    assert providers == ["memory", "loops", "diagnostics"]
-    assert cli._engine_providers(
-        memory_provider="memory",
-        home_assistant=None,
-        control_provider="loops",
-        diagnostics=None,
-    ) == ["memory", "loops"]
+    assert providers == ["memory", "ha", "reachy", "loops", "diagnostics"]
+    assert cli._engine_providers(memory_provider="memory", plugin_providers=[], control_provider="loops", diagnostics=None) == ["memory", "loops"]
 
 
-def test_serve_engine_providers_include_home_assistant_when_configured():
-    providers = cli._engine_providers(
-        memory_provider="memory",
-        home_assistant="ha",
-        control_provider="loops",
-        diagnostics="diagnostics",
-    )
-    assert "ha" in providers
+def test_build_diagnostics_needs_at_least_one_reader():
+    from richard.plugins.registry import PluginRegistry
+
+    empty = PluginRegistry([])
+    assert cli._build_diagnostics(empty) is None
 
 
-def test_build_diagnostics_uses_the_home_assistant_client_when_present():
-    class FakeProvider:
-        client = "ha-client"
-
-    service = cli._build_diagnostics(home_assistant=FakeProvider())
-    assert list(service._readers) == ["ha"]
-
-
-def test_build_diagnostics_without_home_assistant():
-    service = cli._build_diagnostics(home_assistant=None)
-    assert service._readers == {}
+def test_serve_engine_prompt_carries_plugin_context_lines(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("RICHARD_HA_ENABLED", "on")
+    monkeypatch.setenv("RICHARD_HA_HOST", "ha.local")
+    monkeypatch.setenv("RICHARD_HA_TOKEN", "token")
+    captured = {}
+    monkeypatch.setattr(cli, "run_repl", lambda engine, convo, *a, **k: captured.update(engine=engine))
+    cli.main([])
+    assert "Home Assistant is connected at http://ha.local:8123." in captured["engine"]._system_prompt()
 
 
 def test_serve_realtime_guarded_swallows_bind_failure():
