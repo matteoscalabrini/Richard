@@ -1373,3 +1373,101 @@ def test_attach_chip_stays_hidden_until_a_picture_is_chosen(tmp_path):
     html = _app(tmp_path).handle("GET", "/").body.decode()
     assert ".attach-chip[hidden] { display: none; }" in html
     assert '<div class="attach-chip" id="chat-attach-chip" hidden>' in html
+
+
+# --- perception ---
+
+import base64 as _b64  # noqa: E402
+
+
+class _PerceptionFake:
+    def __init__(self):
+        self.frames = []
+        self.enrolled = []
+        self.deleted = []
+        self._live = []
+
+        class Gallery:
+            def list(inner):
+                return [{"name": "matteo", "samples": 3, "enrolled_at": "2026-09-09"}]
+
+            def delete(inner, name):
+                self.deleted.append(name)
+                return name == "matteo"
+        self.gallery = Gallery()
+
+    def push_frame(self, source, jpeg):
+        if not jpeg.startswith(b"\xff\xd8"):
+            raise ValueError("frame is not a decodable image")
+        self.frames.append((source, jpeg))
+        self._live = [source]
+
+    def status(self):
+        return {"sources": [{"id": "browser", "stale": False, "frames": len(self.frames)}], "presence": [], "gallery": self.gallery.list(), "identity_enabled": True}
+
+    def recent_events(self, since_id=0, limit=100):
+        return [{"id": 2, "kind": "person_entered"}] if since_id < 2 else []
+
+    def snapshot(self, source_id=None, detail="low", region=None):
+        return (b"\xff\xd8jpeg", {"source": "browser", "width": 800, "height": 450}) if self._live else None
+
+    def enrol(self, name, jpegs):
+        self.enrolled.append((name, len(jpegs)))
+        return len(jpegs)
+
+
+def _papp(tmp_path, service):
+    config_path = tmp_path / "config.toml"
+    cfg = Config()
+    cfg.plugins.tables["perception"] = {"sensitivity": 70}
+    save_config(cfg, config_path)
+    return WebApp(config_path=config_path, memory_store=MemoryStore(":memory:"), relays=RelayRegistry(),
+                  perception=lambda: service)
+
+
+def test_perception_status_disabled_without_a_service(tmp_path):
+    app = _app(tmp_path)
+    assert _body(app.handle("GET", "/api/perception/status")) == {"enabled": False}
+    assert app.handle("POST", "/api/perception/frame", b'{"source":"browser","image_base64":"AA=="}').status == 503
+
+
+def test_perception_frame_events_and_latest(tmp_path):
+    svc = _PerceptionFake()
+    app = _papp(tmp_path, svc)
+    assert app.handle("GET", "/api/perception/latest.jpg").status == 404
+    body = json.dumps({"source": "browser", "image_base64": _b64.b64encode(b"\xff\xd8abc").decode()}).encode()
+    resp = app.handle("POST", "/api/perception/frame", body)
+    assert resp.status == 200 and _body(resp) == {"ok": True, "source": "browser"}
+    assert svc.frames == [("browser", b"\xff\xd8abc")]
+    bad = json.dumps({"source": "browser", "image_base64": _b64.b64encode(b"nope").decode()}).encode()
+    assert app.handle("POST", "/api/perception/frame", bad).status == 400
+    status = _body(app.handle("GET", "/api/perception/status"))
+    assert status["enabled"] is True and status["sources"][0]["frames"] == 1
+    assert _body(app.handle("GET", "/api/perception/events"))["events"] == [{"id": 2, "kind": "person_entered"}]
+    assert _body(app.handle("GET", "/api/perception/events/2"))["events"] == []
+    latest = app.handle("GET", "/api/perception/latest.jpg")
+    assert latest.status == 200 and latest.content_type == "image/jpeg" and latest.body == b"\xff\xd8jpeg"
+
+
+def test_perception_gallery_routes(tmp_path):
+    svc = _PerceptionFake()
+    app = _papp(tmp_path, svc)
+    assert _body(app.handle("GET", "/api/perception/gallery"))["people"][0]["name"] == "matteo"
+    shots = [_b64.b64encode(b"\xff\xd8a").decode()] * 3
+    resp = app.handle("POST", "/api/perception/gallery", json.dumps({"name": "guest", "images_base64": shots}).encode())
+    assert _body(resp) == {"name": "guest", "samples": 3} and svc.enrolled == [("guest", 3)]
+    assert app.handle("POST", "/api/perception/gallery", b'{"name": "", "images_base64": []}').status == 400
+    assert _body(app.handle("DELETE", "/api/perception/gallery/matteo")) == {"deleted": "matteo"}
+    assert app.handle("DELETE", "/api/perception/gallery/ghost").status == 404
+
+
+def test_perception_config_get_and_put(tmp_path):
+    app = _papp(tmp_path, _PerceptionFake())
+    cfg = _body(app.handle("GET", "/api/perception/config"))
+    assert cfg["sensitivity"] == 70 and cfg["cooldown_s"] == 120 and cfg["identity_enabled"] is False
+    resp = app.handle("PUT", "/api/perception/config", b'{"identity_enabled": true, "quiet_hours": "23:00-07:30", "bogus": 1}')
+    out = _body(resp)
+    assert out["restart_required"] is True and out["config"]["identity_enabled"] is True
+    assert "bogus" not in out["config"]
+    assert load_config(tmp_path / "config.toml").plugins.tables["perception"]["quiet_hours"] == "23:00-07:30"
+    assert app.handle("PUT", "/api/perception/config", b'{"quiet_hours": "late"}').status == 400

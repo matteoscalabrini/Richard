@@ -510,6 +510,7 @@ class WebApp:
         home_assistant_client_factory: Callable[..., object] = HomeAssistantClient,
         voice_library_factory: Callable[[str], object] = VoiceLibrary,
         plugin_records: Callable[[], list] | None = None,
+        perception: Callable[[], object] | None = None,
     ) -> None:
         self._config_path = config_path
         self._memory = memory_store
@@ -524,6 +525,7 @@ class WebApp:
         self._home_assistant_client_factory = home_assistant_client_factory
         self._voice_library_factory = voice_library_factory
         self._plugin_records = plugin_records
+        self._perception = perception  # getter: the service exists only when the plugin is enabled
 
     def handle(self, method: str, path: str, body: bytes = b"") -> Response:
         """Dispatch one request. Catches handler exceptions so a single bad request
@@ -577,9 +579,111 @@ class WebApp:
             return self._update_plugin(body)
         if method == "POST" and path == "/api/restart":
             return self._restart_serve()
+        if path.startswith("/api/perception/"):
+            return self._perception_route(method, path, body)
         return Response.not_found()
 
     # --- API handlers ---
+
+    # --- perception ---
+
+    _PERCEPTION_KEYS = ("identity_enabled", "quiet_hours", "sensitivity", "cooldown_s", "enter_debounce_s",
+                        "leave_debounce_s", "stream_fps", "keep_thumbnails", "device", "stale_s")
+
+    def _perception_service(self):
+        return self._perception() if self._perception is not None else None
+
+    def _perception_route(self, method: str, path: str, body: bytes) -> Response:
+        service = self._perception_service()
+        if path == "/api/perception/status" and method == "GET":
+            if service is None:
+                return Response.json({"enabled": False})
+            return Response.json({"enabled": True, **service.status()})
+        if path == "/api/perception/config" and method in ("GET", "PUT"):
+            return self._perception_config(method, body)
+        if service is None:
+            return Response.json({"error": "perception plugin is not enabled"}, 503)
+        if path == "/api/perception/frame" and method == "POST":
+            payload, err = self._parse_object(body)
+            if err:
+                return err
+            source = str(payload.get("source") or "browser")[:32]
+            try:
+                jpeg = base64.b64decode(str(payload.get("image_base64", "")), validate=True)
+            except (ValueError, binascii.Error):
+                return Response.bad_request("image_base64 is not valid base64")
+            if len(jpeg) > vision.IMAGE_MAX_BYTES:
+                return Response.json({"error": "frame larger than 8 MB"}, 413)
+            try:
+                service.push_frame(source, jpeg)
+            except ValueError as exc:
+                return Response.bad_request(str(exc))
+            return Response.json({"ok": True, "source": source})
+        if path.startswith("/api/perception/events") and method == "GET":
+            tail = path[len("/api/perception/events"):].strip("/")
+            since = _as_int(tail, 0) if tail else 0
+            return Response.json({"events": service.recent_events(since_id=since, limit=100)})
+        if path == "/api/perception/latest.jpg" and method == "GET":
+            shot = service.snapshot(detail="low")
+            if shot is None:
+                return Response.json({"error": "no live camera"}, 404)
+            return Response(status=200, body=shot[0], content_type="image/jpeg")
+        if path == "/api/perception/gallery" and method == "GET":
+            return Response.json({"people": service.gallery.list() if service.gallery else []})
+        if path == "/api/perception/gallery" and method == "POST":
+            payload, err = self._parse_object(body)
+            if err:
+                return err
+            name = str(payload.get("name") or "").strip()
+            raw = payload.get("images_base64")
+            if not name or not isinstance(raw, list) or not raw:
+                return Response.bad_request("a name and at least one snapshot are required")
+            try:
+                jpegs = [base64.b64decode(str(item), validate=True) for item in raw]
+                samples = service.enrol(name, jpegs)
+            except (ValueError, binascii.Error) as exc:
+                return Response.bad_request(str(exc))
+            return Response.json({"name": name, "samples": samples})
+        if path.startswith("/api/perception/gallery/") and method == "DELETE":
+            name = path[len("/api/perception/gallery/"):]
+            if service.gallery is None or not service.gallery.delete(name):
+                return Response.json({"error": f"no person named {name}"}, 404)
+            return Response.json({"deleted": name})
+        return Response.not_found()
+
+    def _perception_config(self, method: str, body: bytes) -> Response:
+        from richard.plugins.perception import PerceptionPlugin
+
+        config = self._load(self._config_path)
+        table = {**PerceptionPlugin().config_defaults(), **config.plugins.table("perception")}
+        if method == "GET":
+            return Response.json(table)
+        payload, err = self._parse_object(body)
+        if err:
+            return err
+        from richard.perception.gate import parse_quiet_hours
+
+        for key in self._PERCEPTION_KEYS:
+            if key not in payload:
+                continue
+            value = payload[key]
+            if key == "quiet_hours":
+                try:
+                    parse_quiet_hours(str(value or ""))
+                except ValueError as exc:
+                    return Response.bad_request(str(exc))
+                table[key] = str(value or "")
+            elif key in ("identity_enabled", "keep_thumbnails"):
+                table[key] = _as_bool(value)
+            elif key == "device":
+                table[key] = "cuda" if str(value) == "cuda" else "cpu"
+            elif key == "sensitivity":
+                table[key] = min(100, max(0, _as_int(value, 50)))
+            else:
+                table[key] = _clamp_float(value, 0.0, 86400.0)
+        config.plugins.tables["perception"] = table
+        self._save(config, self._config_path)
+        return Response.json({"config": table, "restart_required": True})
 
     def _status(self) -> Response:
         satellites = self._relays.ids() if self._relays is not None else []
