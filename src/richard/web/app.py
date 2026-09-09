@@ -38,6 +38,7 @@ from richard.plugins.home_assistant.client import HomeAssistantClient
 from richard.memory import MemoryStore
 from richard.persona import BASE_CHARACTER
 from richard.satellite.relays import RelayRegistry
+from richard.voice.effects import EFFECTS
 from richard.web.static import SPA_HTML
 
 _ICON_PATH = Path(__file__).with_name("icon.png")
@@ -103,6 +104,14 @@ def _config_to_dict(config: Config) -> dict:
             "tts_voice": config.voice.tts_voice,
             "tts_endpoint": config.voice.tts_endpoint,
             "tts_streaming": config.voice.tts_streaming,
+            "tts_model": config.voice.tts_model,
+            "tts_language": config.voice.tts_language,
+            "tts_instructions": config.voice.tts_instructions,
+            "tts_xvec_only": config.voice.tts_xvec_only,
+            "tts_task_type": config.voice.tts_task_type,
+            "tts_effect": config.voice.tts_effect,
+            "tts_effect_strength": config.voice.tts_effect_strength,
+            "tts_effect_tone": config.voice.tts_effect_tone,
             "vad_aggressiveness": config.voice.vad_aggressiveness,
             "silence_ms": config.voice.silence_ms,
             "samplerate": config.voice.samplerate,
@@ -343,6 +352,23 @@ def _apply_config_update(config: Config, patch: dict) -> list[str]:
         if "output_device" in v:
             config.voice.output_device = v["output_device"] or None
             changed.append("voice.output_device")
+        for key in ("tts_model", "tts_language", "tts_instructions", "tts_task_type"):
+            if key in v:
+                setattr(config.voice, key, str(v[key] or ""))
+                changed.append(f"voice.{key}")
+        if "tts_xvec_only" in v:
+            config.voice.tts_xvec_only = _as_bool(v["tts_xvec_only"])
+            changed.append("voice.tts_xvec_only")
+        if "tts_effect" in v:
+            name = str(v["tts_effect"] or "none")
+            config.voice.tts_effect = name if name in EFFECTS else "none"
+            changed.append("voice.tts_effect")
+        if "tts_effect_strength" in v:
+            config.voice.tts_effect_strength = max(0, min(100, _as_int(v["tts_effect_strength"], 50)))
+            changed.append("voice.tts_effect_strength")
+        if "tts_effect_tone" in v:
+            config.voice.tts_effect_tone = _clamp_float(v["tts_effect_tone"], 20.0, 200.0)
+            changed.append("voice.tts_effect_tone")
         if "language" in v:
             config.voice.language = str(v["language"]) or "auto"
             changed.append("voice.language")

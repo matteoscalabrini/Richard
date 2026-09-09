@@ -1031,3 +1031,34 @@ def test_spa_has_scheduled_loop_controls():
     assert "loop-kind" in SPA_HTML
     assert "describeLoopSchedule" in SPA_HTML
     assert "loop-schedule-mode" in SPA_HTML
+
+
+def test_config_api_round_trips_qwen_fields_and_effect(tmp_path):
+    app = _app(tmp_path)
+    v = _body(app.handle("GET", "/api/config"))["voice"]
+    assert v["tts_model"] == "chatterbox" and v["tts_xvec_only"] is False and v["tts_effect"] == "none"
+    patch = {"voice": {
+        "tts_model": "", "tts_language": "Italian", "tts_instructions": "dry", "tts_xvec_only": True,
+        "tts_task_type": "Base", "tts_effect": "robot", "tts_effect_strength": 70, "tts_effect_tone": 55,
+    }}
+    data = _body(app.handle("PUT", "/api/config", json.dumps(patch).encode()))
+    assert "voice.tts_effect" in data["changed"] and "voice.tts_xvec_only" in data["changed"]
+    v = load_config(app._config_path).voice
+    assert (v.tts_model, v.tts_language, v.tts_instructions, v.tts_xvec_only, v.tts_task_type) == ("", "Italian", "dry", True, "Base")
+    assert (v.tts_effect, v.tts_effect_strength, v.tts_effect_tone) == ("robot", 70, 55.0)
+
+
+def test_put_clamps_effect_knobs_and_rejects_unknown_effect(tmp_path):
+    app = _app(tmp_path)
+    app.handle("PUT", "/api/config", json.dumps({"voice": {"tts_effect": "vocoder", "tts_effect_strength": 500, "tts_effect_tone": 1}}).encode())
+    v = load_config(app._config_path).voice
+    assert (v.tts_effect, v.tts_effect_strength, v.tts_effect_tone) == ("none", 100, 20.0)
+
+
+def test_put_realtime_token(tmp_path):
+    app = _app(tmp_path)
+    data = _body(app.handle("PUT", "/api/config", json.dumps({"realtime": {"token": "s3cret", "port": 8767}}).encode()))
+    assert "realtime.token" in data["changed"]
+    rt = load_config(app._config_path).realtime
+    assert (rt.token, rt.port) == ("s3cret", 8767)
+    assert _body(app.handle("GET", "/api/config"))["realtime"]["token"] == "s3cret"
