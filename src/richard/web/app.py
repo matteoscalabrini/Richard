@@ -469,6 +469,7 @@ class WebApp:
         voice_turn: Callable[[list, bytes], dict] | None = None,
         home_assistant_client_factory: Callable[..., object] = HomeAssistantClient,
         voice_library_factory: Callable[[str], object] = VoiceLibrary,
+        plugin_records: Callable[[], list] | None = None,
     ) -> None:
         self._config_path = config_path
         self._memory = memory_store
@@ -482,6 +483,7 @@ class WebApp:
         self._voice_turn = voice_turn
         self._home_assistant_client_factory = home_assistant_client_factory
         self._voice_library_factory = voice_library_factory
+        self._plugin_records = plugin_records
 
     def handle(self, method: str, path: str, body: bytes = b"") -> Response:
         """Dispatch one request. Catches handler exceptions so a single bad request
@@ -529,6 +531,10 @@ class WebApp:
             return self._list_voices()
         if method == "POST" and path == "/api/voices":
             return self._upload_voice(body)
+        if method == "GET" and path == "/api/plugins":
+            return self._list_plugins()
+        if method == "PUT" and path == "/api/plugins":
+            return self._update_plugin(body)
         if method == "POST" and path == "/api/restart":
             return self._restart_serve()
         return Response.not_found()
@@ -605,6 +611,58 @@ class WebApp:
         except Exception as exc:  # noqa: BLE001
             return Response.json({"error": f"upload failed: {exc}"}, 502)
         return Response.json({"uploaded": name, "voices": listing["voices"], "uploaded_list": listing["uploaded"]})
+
+    # --- plugins ---
+
+    def _plugin_rows(self, config: Config) -> list[dict]:
+        from richard.plugins.registry import PluginRegistry
+
+        if self._plugin_records is not None:
+            records = list(self._plugin_records())
+            running_known = True
+        else:
+            records = PluginRegistry().discover()  # chat mode / tests: config state only
+            running_known = False
+        rows = []
+        seen = set()
+        for record in records:
+            seen.add(record.name)
+            rows.append({
+                "name": record.name,
+                "version": record.version,
+                "module": record.module,
+                "configured": record.name in config.plugins.enabled,
+                "running": record.status if running_known else "unknown",
+                "error": record.error,
+            })
+        for name in config.plugins.enabled:
+            if name not in seen:
+                rows.append({"name": name, "version": "?", "module": "?", "configured": True, "running": "missing", "error": None})
+        return rows
+
+    def _list_plugins(self) -> Response:
+        config = self._load(self._config_path)
+        return Response.json({"plugins": self._plugin_rows(config)})
+
+    def _update_plugin(self, body: bytes) -> Response:
+        try:
+            payload = json.loads(body or b"{}")
+        except (ValueError, TypeError) as exc:
+            return Response.bad_request(f"invalid JSON: {exc}")
+        if not isinstance(payload, dict) or not str(payload.get("name", "")).strip():
+            return Response.bad_request("expected an object with a plugin name")
+        name = str(payload["name"]).strip()
+        enabled = _as_bool(payload.get("enabled", True))
+        config = self._load(self._config_path)
+        installed = {row["name"] for row in self._plugin_rows(config) if row["running"] != "missing"}
+        if enabled and name not in installed:
+            return Response.json({"error": f"plugin {name} is not installed"}, 404)
+        names = [entry for entry in config.plugins.enabled if entry != name]
+        if enabled:
+            names.append(name)
+        config.plugins.enabled = names
+        self._save(config, self._config_path)
+        return Response.json({"plugins": self._plugin_rows(config), "restart_required": True})
 
     def _restart_serve(self) -> Response:
         if self._restart is None:

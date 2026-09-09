@@ -495,3 +495,10 @@ def test_build_tts_unknown_effect_speaks_plain_and_says_so(monkeypatch):
     engine = cli._build_tts(config, lines.append)
     assert isinstance(engine, fake)
     assert lines == ["Unknown voice effect 'vocoder'; speaking without an effect."]
+
+
+def test_serve_passes_the_registry_records_to_the_web_app():
+    import inspect
+
+    source = inspect.getsource(cli._run_serve)
+    assert "plugin_records=registry.records" in source

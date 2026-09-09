@@ -743,6 +743,7 @@ def _run_serve(write: Callable[[str], None] = print) -> int:
             control_loop_store=control_store,
             control_target_reader=control_reader,
             relays=relays,
+            plugin_records=registry.records,
             restart=_restart,
             engine_factory=_chat_engine,
             voice_turn=voice_turn,

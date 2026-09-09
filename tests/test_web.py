@@ -1141,3 +1141,46 @@ def test_voice_upload_validates_name_audio_and_size(tmp_path):
     assert app.handle("POST", "/api/voices", json.dumps(not_b64).encode()).status == 400
     huge = {"name": "ok", "audio_base64": base64.b64encode(b"\0" * (8 * 1024 * 1024 + 1)).decode()}
     assert app.handle("POST", "/api/voices", json.dumps(huge).encode()).status == 413
+
+
+from richard.plugins.registry import PluginRecord
+
+
+def _records():
+    return [
+        PluginRecord(name="home_assistant", version="1.0", module="richard.plugins.home_assistant:HomeAssistantPlugin", enabled=True, error="ValueError: host or token unset"),
+        PluginRecord(name="reachy", version="0.1", module="richard_reachy:ReachyPlugin"),
+    ]
+
+
+def test_plugins_list_reports_configured_and_running_state(tmp_path):
+    app = _app(tmp_path, plugin_records=_records)
+    config = load_config(app._config_path)
+    config.plugins.enabled = ["home_assistant"]
+    save_config(config, app._config_path)
+    rows = _body(app.handle("GET", "/api/plugins"))["plugins"]
+    assert [(r["name"], r["configured"], r["running"]) for r in rows] == [("home_assistant", True, "error"), ("reachy", False, "disabled")]
+    assert rows[0]["error"] == "ValueError: host or token unset"
+
+
+def test_plugins_list_without_a_registry_discovers_installed_plugins(tmp_path):
+    rows = _body(_app(tmp_path).handle("GET", "/api/plugins"))["plugins"]
+    home = next(r for r in rows if r["name"] == "home_assistant")
+    assert home["running"] == "unknown" and home["configured"] is False
+
+
+def test_plugins_enable_and_disable_persist_and_ask_for_a_restart(tmp_path):
+    app = _app(tmp_path, plugin_records=_records)
+    data = _body(app.handle("PUT", "/api/plugins", json.dumps({"name": "reachy", "enabled": True}).encode()))
+    assert data["restart_required"] is True
+    assert load_config(app._config_path).plugins.enabled == ["reachy"]
+    assert next(r for r in data["plugins"] if r["name"] == "reachy")["configured"] is True
+    app.handle("PUT", "/api/plugins", json.dumps({"name": "reachy", "enabled": False}).encode())
+    assert load_config(app._config_path).plugins.enabled == []
+
+
+def test_plugins_enable_unknown_name_is_404_and_bad_body_is_400(tmp_path):
+    app = _app(tmp_path, plugin_records=_records)
+    assert app.handle("PUT", "/api/plugins", json.dumps({"name": "ghost", "enabled": True}).encode()).status == 404
+    assert app.handle("PUT", "/api/plugins", b"[]").status == 400
+    assert app.handle("PUT", "/api/plugins", json.dumps({"enabled": True}).encode()).status == 400
