@@ -403,8 +403,8 @@ def _build_home_assistant_provider(config, write: Callable[[str], None] = print)
             "configure both before restarting Richard."
         )
         return None
-    from richard.home_assistant import HomeAssistantClient
-    from richard.providers.home_assistant import HomeAssistantProvider
+    from richard.plugins.home_assistant.client import HomeAssistantClient
+    from richard.plugins.home_assistant.provider import HomeAssistantProvider
 
     client = HomeAssistantClient(
         ha.url,

@@ -1,6 +1,6 @@
 from richard.diagnostics import DiagnosticsProvider, DiagnosticsService
 from richard.errors import HomeAssistantError
-from richard.home_assistant import HomeAssistantEntity
+from richard.plugins.home_assistant.client import HomeAssistantEntity
 
 
 class FakeHomeAssistant:

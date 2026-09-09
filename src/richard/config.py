@@ -84,6 +84,34 @@ class HomeAssistant:
             host = f"[{host}]"
         return f"{scheme}://{host}:{self.port}"
 
+    @classmethod
+    def from_table(cls, table: dict, *, enabled: bool = False) -> "HomeAssistant":
+        settings = cls(enabled=enabled)
+        if "host" in table:
+            settings.host = str(table["host"])
+        if "port" in table:
+            settings.port = int(table["port"])
+        if "use_https" in table:
+            settings.use_https = bool(table["use_https"])
+        if table.get("token") is not None:
+            settings.token = str(table["token"])
+        if "timeout" in table:
+            settings.timeout = float(table["timeout"])
+        if "verify_ssl" in table:
+            settings.verify_ssl = bool(table["verify_ssl"])
+        if "host" not in table and table.get("url"):
+            apply_home_assistant_url(settings, str(table["url"]))
+        return settings
+
+    def to_table(self) -> dict:
+        table: dict = {
+            "host": self.host, "port": self.port, "use_https": self.use_https,
+            "timeout": self.timeout, "verify_ssl": self.verify_ssl,
+        }
+        if self.token is not None:
+            table["token"] = self.token
+        return table
+
 
 def apply_home_assistant_url(settings: HomeAssistant, url: str) -> None:
     """Populate host/port/TLS from the former URL-style setting or CLI input."""

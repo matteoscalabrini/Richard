@@ -3,8 +3,8 @@ from datetime import datetime, timezone
 import pytest
 
 from richard.errors import HomeAssistantError
-from richard.home_assistant import HomeAssistantEntity
-from richard.providers.home_assistant import HomeAssistantProvider
+from richard.plugins.home_assistant.client import HomeAssistantEntity
+from richard.plugins.home_assistant.provider import HomeAssistantProvider
 
 _NOW = datetime(2026, 7, 16, 12, 0, 0, tzinfo=timezone.utc)
 

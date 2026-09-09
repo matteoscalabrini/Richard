@@ -4,7 +4,7 @@ import httpx
 import pytest
 
 from richard.errors import HomeAssistantError
-from richard.home_assistant import HomeAssistantClient
+from richard.plugins.home_assistant.client import HomeAssistantClient
 
 
 def _client(handler, base_url="http://ha.local:8123/api"):

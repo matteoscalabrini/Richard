@@ -34,7 +34,7 @@ from richard.config import (
 from richard.conversation import Conversation
 from richard.control_loops import ControlLoopStore, ControlTargetReader
 from richard.errors import BrainUnreachable, HomeAssistantError
-from richard.home_assistant import HomeAssistantClient
+from richard.plugins.home_assistant.client import HomeAssistantClient
 from richard.memory import MemoryStore
 from richard.persona import BASE_CHARACTER
 from richard.satellite.relays import RelayRegistry

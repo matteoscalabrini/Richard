@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Callable
 
 from richard.errors import HomeAssistantError
-from richard.home_assistant import HomeAssistantClient, HomeAssistantEntity
+from richard.plugins.home_assistant.client import HomeAssistantClient, HomeAssistantEntity
 from richard.verification import (
     HOME_ASSISTANT,
     Approx,

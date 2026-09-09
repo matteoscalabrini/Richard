@@ -7,7 +7,7 @@ import pytest
 from richard.config import Config, load_config, save_config
 from richard.control_loops import ControlLoopStore, ControlTargetReader
 from richard.errors import HomeAssistantError
-from richard.home_assistant import HomeAssistantEntity
+from richard.plugins.home_assistant.client import HomeAssistantEntity
 from richard.memory import MemoryStore
 from richard.satellite.relays import RelayRegistry
 from richard.web import WebApp

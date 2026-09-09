@@ -42,6 +42,9 @@ Issues = "https://github.com/matteoscalabrini/Richard/issues"
 [project.scripts]
 richard = "richard.cli:main"
 
+[project.entry-points."richard.plugins"]
+home_assistant = "richard.plugins.home_assistant:HomeAssistantPlugin"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

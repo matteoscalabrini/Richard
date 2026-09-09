@@ -16,8 +16,8 @@ from richard.verification import (
     HOME_ASSISTANT,
     VerificationResult,
     VerificationStatus,
-    compare_fields,
-    render_values,
+    failed,
+    judge,
 )
 
 
@@ -198,7 +198,7 @@ class DiagnosticsService:
         return self._diagnose_entity(matches[0])
 
     def _diagnose_entity(self, match: Match) -> Diagnosis:
-        from richard.providers.home_assistant import entity_snapshot
+        from richard.plugins.home_assistant.provider import entity_snapshot
 
         try:
             entity = self._home_assistant.get_entity(match.identifier)
@@ -218,14 +218,14 @@ class DiagnosticsService:
         """Read a target's live state and compare it to `expected`. Never writes."""
         matches, _ha_error = self._resolve(target)
         if not matches:
-            return _failed(target, f"I don't see a target called '{target}'")
+            return failed(HOME_ASSISTANT, target, target, "verify_target_state", f"I don't see a target called '{target}'")
         if len(matches) > 1:
             choices = ", ".join(f"{m.name} ({m.key})" for m in matches[:8])
-            return _failed(target, f"'{target}' matches more than one target: {choices}")
+            return failed(HOME_ASSISTANT, target, target, "verify_target_state", f"'{target}' matches more than one target: {choices}")
         return self._verify_entity(matches[0], expected)
 
     def _verify_entity(self, match: Match, expected: dict) -> VerificationResult:
-        from richard.providers.home_assistant import entity_snapshot
+        from richard.plugins.home_assistant.provider import entity_snapshot
 
         def build(status, **kwargs):
             return VerificationResult(
@@ -240,32 +240,7 @@ class DiagnosticsService:
                 VerificationStatus.UNCONFIRMED,
                 reason=f"{match.name} could not be read ({exc})",
             )
-        return _judge(build, expected, entity_snapshot(entity), match.name)
-
-
-def _judge(build, expected: dict, observed: dict, name: str) -> VerificationResult:
-    mismatched, missing = compare_fields(expected, observed, {})
-    seen = {key: observed.get(key) for key in expected if key in observed}
-    if missing:
-        return build(
-            VerificationStatus.UNCONFIRMED,
-            observed=seen,
-            reason=f"{name} does not report {', '.join(missing)}",
-        )
-    if mismatched:
-        return build(VerificationStatus.MISMATCH, observed=seen)
-    return build(
-        VerificationStatus.CONFIRMED,
-        observed=seen,
-        summary=f"{name} matches: {render_values(seen)}.",
-    )
-
-
-def _failed(target: str, reason: str) -> VerificationResult:
-    return VerificationResult(
-        status=VerificationStatus.FAILED, source=HOME_ASSISTANT, target=target, name=target,
-        action="verify_target_state", requested={}, reason=reason,
-    )
+        return judge(build, expected, entity_snapshot(entity), match.name)
 
 
 class DiagnosticsProvider:

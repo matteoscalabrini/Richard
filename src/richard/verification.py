@@ -200,3 +200,34 @@ class VerificationResult:
             )
         reason = self.reason or "the command was rejected"
         return f"FAILED: {self.name} — {reason}. Do not claim success."
+
+
+def judge(build, expected: dict, observed: dict, name: str) -> VerificationResult:
+    """Grade an observed snapshot against the expected fields. `build(status, **kwargs)`
+    produces the VerificationResult so the caller owns source/target/action."""
+    mismatched, missing = compare_fields(expected, observed, {})
+    seen = {key: observed.get(key) for key in expected if key in observed}
+    if missing:
+        return build(
+            VerificationStatus.UNCONFIRMED,
+            observed=seen,
+            reason=f"{name} does not report {', '.join(missing)}",
+        )
+    if mismatched:
+        return build(
+            VerificationStatus.MISMATCH,
+            observed=seen,
+            reason="mismatch on " + ", ".join(mismatched),
+        )
+    return build(
+        VerificationStatus.CONFIRMED,
+        observed=seen,
+        summary=f"{name} matches: {render_values(seen)}.",
+    )
+
+
+def failed(source: str, target: str, name: str, action: str, reason: str) -> VerificationResult:
+    return VerificationResult(
+        status=VerificationStatus.FAILED, source=source, target=target, name=name,
+        action=action, reason=reason,
+    )

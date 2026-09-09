@@ -367,3 +367,18 @@ def test_plugins_default_empty_and_table_creates_on_demand():
 def test_default_plugins_dir(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
     assert default_plugins_dir() == tmp_path / ".richard" / "plugins"
+
+
+def test_home_assistant_from_table_and_to_table():
+    from richard.config import HomeAssistant
+
+    settings = HomeAssistant.from_table({"host": "ha.local", "port": 9443, "use_https": True, "token": "t"}, enabled=True)
+    assert settings.enabled is True
+    assert settings.url == "https://ha.local:9443"
+    assert settings.timeout == 10.0  # default kept
+    assert settings.to_table() == {
+        "host": "ha.local", "port": 9443, "use_https": True, "token": "t", "timeout": 10.0, "verify_ssl": True,
+    }
+    assert HomeAssistant.from_table({}).to_table() == {
+        "host": "homeassistant.local", "port": 8123, "use_https": False, "timeout": 10.0, "verify_ssl": True,
+    }

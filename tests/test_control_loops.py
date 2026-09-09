@@ -6,7 +6,7 @@ from richard.control_loops import (
     ControlTargetReader,
     describe_changes,
 )
-from richard.home_assistant import HomeAssistantEntity
+from richard.plugins.home_assistant.client import HomeAssistantEntity
 
 
 class FakeHomeAssistant:

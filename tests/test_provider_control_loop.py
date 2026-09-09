@@ -2,7 +2,7 @@ import json
 from datetime import datetime, timedelta, timezone
 
 from richard.control_loops import ControlLoopStore, ControlTargetReader
-from richard.home_assistant import HomeAssistantEntity
+from richard.plugins.home_assistant.client import HomeAssistantEntity
 from richard.providers.control_loop import ControlLoopProvider
 
 

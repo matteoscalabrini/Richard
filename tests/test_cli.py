@@ -191,7 +191,7 @@ def test_home_assistant_provider_requires_enabled_complete_config():
 def test_home_assistant_provider_builds_when_configured():
     from richard import cli
     from richard.config import Config
-    from richard.providers.home_assistant import HomeAssistantProvider
+    from richard.plugins.home_assistant.provider import HomeAssistantProvider
 
     cfg = Config()
     cfg.home_assistant.enabled = True

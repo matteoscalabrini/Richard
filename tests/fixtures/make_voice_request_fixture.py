@@ -19,7 +19,7 @@ from richard.memory import MemoryStore
 from richard.memory_tools import MemoryTools
 from richard.persona import build_system_prompt
 from richard.providers.control_loop import CREATE_SCHEMA, DELETE_SCHEMA, LIST_SCHEMA, UPDATE_SCHEMA
-from richard.providers.home_assistant import CALL_SERVICE_SCHEMA, GET_STATE_SCHEMA, LIST_ENTITIES_SCHEMA
+from richard.plugins.home_assistant.provider import CALL_SERVICE_SCHEMA, GET_STATE_SCHEMA, LIST_ENTITIES_SCHEMA
 from richard.providers.memory import MEMORY_INTRO
 
 INVENTED_MEMORIES = [

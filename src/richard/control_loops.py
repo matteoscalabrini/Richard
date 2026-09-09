@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from richard.home_assistant import HomeAssistantClient, HomeAssistantEntity
+from richard.plugins.home_assistant.client import HomeAssistantClient, HomeAssistantEntity
 from richard.schedules import describe_schedule, next_run, parse_schedule
 
 
