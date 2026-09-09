@@ -7,7 +7,7 @@ import httpx
 
 from richard.brain.completion import Completion, StreamEvent, ToolCall
 from richard.conversation import Message
-from richard.errors import BrainUnreachable
+from richard.errors import BrainRejectedInput, BrainUnreachable
 
 
 def _parse_arguments(raw: str) -> dict:
@@ -19,6 +19,28 @@ def _parse_arguments(raw: str) -> dict:
     except (ValueError, TypeError):
         return {}
     return arguments if isinstance(arguments, dict) else {}
+
+
+def _has_images(messages: list[dict]) -> bool:
+    for message in messages:
+        content = message.get("content")
+        if isinstance(content, list) and any(
+            isinstance(p, dict) and p.get("type") == "image_url" for p in content
+        ):
+            return True
+    return False
+
+
+def _check_status(response: httpx.Response, messages: list[dict]) -> None:
+    """raise_for_status, except that a 4xx on a request with images is a rejected
+    input (the model cannot see), not an unreachable brain."""
+    if 400 <= response.status_code < 500 and _has_images(messages):
+        try:
+            body = response.read()[:500].decode(errors="replace")
+        except Exception:  # body unreadable; the status is the point
+            body = ""
+        raise BrainRejectedInput(f"brain rejected the request ({response.status_code}): {body}")
+    response.raise_for_status()
 
 
 class LlamaCppBrain:
@@ -56,7 +78,7 @@ class LlamaCppBrain:
             headers["Authorization"] = f"Bearer {self._api_key}"
         try:
             response = self._client.post(self._url, json=payload, headers=headers)
-            response.raise_for_status()
+            _check_status(response, messages)
         except httpx.HTTPError as exc:
             raise BrainUnreachable(str(exc)) from exc
         data = response.json()
@@ -89,7 +111,7 @@ class LlamaCppBrain:
         acc: dict[int, dict] = {}
         try:
             with self._client.stream("POST", self._url, json=payload, headers=headers) as response:
-                response.raise_for_status()
+                _check_status(response, messages)
                 for line in response.iter_lines():
                     if not line or not line.startswith("data:"):
                         continue

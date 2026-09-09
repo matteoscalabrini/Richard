@@ -206,3 +206,65 @@ def test_stream_requests_prompt_cache():
     brain = LlamaCppBrain("http://box:8080", "local", client=_client(handler))
     list(brain.stream([{"role": "user", "content": "hi"}]))
     assert captured["cache_prompt"] is True
+
+
+from richard.conversation import user_parts  # noqa: E402
+from richard.errors import BrainRejectedInput  # noqa: E402
+
+_IMG = "data:image/jpeg;base64,/9j/4AAQ"
+
+
+def test_complete_sends_content_parts_unchanged():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.update(json.loads(request.content))
+        return httpx.Response(200, json={"choices": [{"message": {"content": "a mug"}}]})
+
+    brain = LlamaCppBrain("http://box:8080", "m", client=_client(handler))
+    parts = user_parts("what is this?", [_IMG])
+    brain.complete([{"role": "system", "content": "s"}, {"role": "user", "content": parts}])
+    assert captured["messages"][1] == {"role": "user", "content": parts}
+
+
+def test_complete_4xx_with_images_raises_brain_rejected_input():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, text='{"error": "image input not supported"}')
+
+    brain = LlamaCppBrain("http://box:8080", "m", client=_client(handler))
+    with pytest.raises(BrainRejectedInput, match="400"):
+        brain.complete([{"role": "user", "content": user_parts("look", [_IMG])}])
+
+
+def test_complete_4xx_without_images_stays_brain_unreachable():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, text="bad")
+
+    brain = LlamaCppBrain("http://box:8080", "m", client=_client(handler))
+    with pytest.raises(BrainUnreachable) as excinfo:
+        brain.complete([{"role": "user", "content": "hi"}])
+    assert not isinstance(excinfo.value, BrainRejectedInput)
+
+
+def test_stream_4xx_with_images_raises_brain_rejected_input():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(422, text="unprocessable")
+
+    brain = LlamaCppBrain("http://box:8080", "m", client=_client(handler))
+    with pytest.raises(BrainRejectedInput, match="422"):
+        list(brain.stream([{"role": "user", "content": user_parts(None, [_IMG])}]))
+
+
+def test_stream_passes_parts_and_yields_deltas():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.update(json.loads(request.content))
+        body = 'data: {"choices": [{"delta": {"content": "a mug"}}]}\n\ndata: [DONE]\n\n'
+        return httpx.Response(200, text=body)
+
+    brain = LlamaCppBrain("http://box:8080", "m", client=_client(handler))
+    parts = user_parts("look", [_IMG])
+    events = list(brain.stream([{"role": "user", "content": parts}]))
+    assert captured["messages"] == [{"role": "user", "content": parts}]
+    assert events[0].delta == "a mug" and events[-1].done
