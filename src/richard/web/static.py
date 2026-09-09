@@ -186,6 +186,7 @@ SPA_HTML = r"""<!DOCTYPE html>
   .entry-sub.online { color: var(--success-color); }
   .entry-sub.offline { color: var(--error-color); }
   .empty-message { color: var(--text-secondary); font-size: 0.8rem; text-align: center; padding: 1rem 0; }
+  .remote-only-hidden { display: none !important; }
   .row-add { display: flex; gap: 0.5rem; margin-top: 0.25rem; }
   .row-add .setting-input { flex: 1; }
 
@@ -452,7 +453,7 @@ SPA_HTML = r"""<!DOCTYPE html>
     <section class="drawer-page" data-drawer-page="voice" hidden>
       <button type="button" class="drawer-back" data-drawer-back="configuration">‹ Back to configuration</button>
       <div class="drawer-title" tabindex="-1"><b>&gt; VOICE</b><span>system.voice</span></div>
-      <div class="drawer-page-body" data-panel-content="voice-content"></div>
+      <div class="drawer-page-body" data-panel-content="voice-stt-content voice-tts-content voice-sample-content voice-effect-content voice-turn-content voice-mic-content"></div>
     </section>
 
     <section class="drawer-page" data-drawer-page="home-assistant" hidden>
@@ -545,36 +546,133 @@ SPA_HTML = r"""<!DOCTYPE html>
       </div>
     </div>
 
-    <!-- system.voice.io -->
+    <!-- system.voice.stt -->
     <div class="terminal-section">
-      <div class="terminal-header-line" data-target="voice-content">
+      <div class="terminal-header-line" data-target="voice-stt-content">
         <span class="terminal-prompt">&gt; </span>
-        <span class="terminal-command window-title">system.voice.io</span>
+        <span class="terminal-command window-title">system.voice.stt</span>
         <span class="window-control is-open">[_]</span>
       </div>
-      <div class="window-content" id="voice-content">
-        <p class="lede">Speech-to-text and text-to-speech engines. Remote engines point at a GPU server; local runs in-process.</p>
+      <div class="window-content" id="voice-stt-content">
+        <p class="lede">Speech-to-text. Remote points at a Whisper server; local runs faster-whisper in-process. Restart to apply.</p>
         <div class="field-row">
           <div class="setting-group"><label class="setting-label">STT engine</label><select id="voice.stt_engine" class="setting-input"><option value="local">local (faster-whisper)</option><option value="remote">remote (Whisper server)</option></select></div>
-          <div class="setting-group"><label class="setting-label">STT model</label><input id="voice.stt_model" class="setting-input" placeholder="base.en"></div>
+          <div class="setting-group"><label class="setting-label">STT model</label><input id="voice.stt_model" class="setting-input" placeholder="large-v3-turbo"></div>
         </div>
-        <div class="setting-group"><label class="setting-label">STT endpoint</label><input id="voice.stt_endpoint" class="setting-input" placeholder="http://host:8005 (remote only)"></div>
+        <div class="field-row">
+          <div class="setting-group"><label class="setting-label">STT endpoint (remote only)</label><input id="voice.stt_endpoint" class="setting-input" placeholder="http://host:8005"></div>
+          <div class="setting-group"><label class="setting-label">Language</label><input id="voice.language" class="setting-input" placeholder="auto"><span class="lede" style="margin:0;">STT hint and TTS voice selection. auto = detect per utterance.</span></div>
+        </div>
+        <div class="button-row"><button class="setting-button" data-save="voice-stt">Save changes</button><div class="status-line" id="voice-stt-status"></div></div>
+      </div>
+    </div>
+
+    <!-- system.voice.tts -->
+    <div class="terminal-section">
+      <div class="terminal-header-line" data-target="voice-tts-content">
+        <span class="terminal-prompt">&gt; </span>
+        <span class="terminal-command window-title">system.voice.tts</span>
+        <span class="window-control is-open">[_]</span>
+      </div>
+      <div class="window-content" id="voice-tts-content">
+        <p class="lede">Text-to-speech. Remote is the Qwen3-TTS server on the GPU box; kokoro and piper run in-process. Restart to apply.</p>
         <div class="field-row">
           <div class="setting-group"><label class="setting-label">TTS engine</label><select id="voice.tts_engine" class="setting-input"><option value="kokoro">kokoro</option><option value="piper">piper</option><option value="remote">remote (GPU server)</option></select></div>
-          <div class="setting-group"><label class="setting-label">TTS voice</label><input id="voice.tts_voice" class="setting-input" placeholder="bm_lewis"></div>
+          <div class="setting-group"><label class="setting-label">TTS voice</label><input id="voice.tts_voice" class="setting-input" list="tts-voice-options" placeholder="clap1"><datalist id="tts-voice-options"></datalist></div>
         </div>
-        <div class="setting-group"><label class="setting-label">TTS endpoint</label><input id="voice.tts_endpoint" class="setting-input" placeholder="http://host:8004 (remote only)"></div>
+        <div class="setting-group"><label class="setting-label">TTS endpoint (remote only)</label><input id="voice.tts_endpoint" class="setting-input" placeholder="http://host:8091"></div>
         <div class="setting-group"><div class="checkbox-btn"><input type="checkbox" id="voice.tts_streaming"><label for="voice.tts_streaming">Stream speech sentence-by-sentence</label><span class="checkmark"></span></div></div>
+        <div data-remote-only>
+          <div class="setting-group"><label class="setting-label">Qwen3-TTS request (remote only)</label><span class="lede" style="margin:0;">Fields sent to the server. Blank model = omit the field (vLLM-Omni serves one checkpoint).</span></div>
+          <div class="field-row">
+            <div class="setting-group"><label class="setting-label">Model</label><input id="voice.tts_model" class="setting-input" placeholder="(blank)"></div>
+            <div class="setting-group"><label class="setting-label">Language</label><input id="voice.tts_language" class="setting-input" placeholder="Italian / English / (server default)"></div>
+          </div>
+          <div class="setting-group"><label class="setting-label">Instructions</label><input id="voice.tts_instructions" class="setting-input" placeholder="(none) style / emotion hint"></div>
+          <div class="field-row">
+            <div class="setting-group"><div class="checkbox-btn"><input type="checkbox" id="voice.tts_xvec_only"><label for="voice.tts_xvec_only">x-vector only (timbre only, native prosody)</label><span class="checkmark"></span></div></div>
+            <div class="setting-group"><label class="setting-label">Task type</label><select id="voice.tts_task_type" class="setting-input"><option value="">(server default)</option><option value="Base">Base</option><option value="CustomVoice">CustomVoice</option><option value="VoiceDesign">VoiceDesign</option></select></div>
+          </div>
+        </div>
+        <div class="button-row"><button class="setting-button" data-save="voice-tts">Save changes</button><div class="status-line" id="voice-tts-status"></div></div>
+      </div>
+    </div>
+
+    <!-- system.voice.sample -->
+    <div class="terminal-section" data-remote-only>
+      <div class="terminal-header-line" data-target="voice-sample-content">
+        <span class="terminal-prompt">&gt; </span>
+        <span class="terminal-command window-title">system.voice.sample</span>
+        <span class="window-control is-open">[_]</span>
+      </div>
+      <div class="window-content" id="voice-sample-content">
+        <p class="lede">Upload a reference clip to the TTS server as a named voice. Mono, 8–15 s, speech only; the file goes up unchanged and the server resamples. Then pick it as the TTS voice above and save.</p>
+        <div class="field-row">
+          <div class="setting-group"><label class="setting-label">Audio file</label><input id="voice-sample-file" type="file" accept="audio/*" class="setting-input"></div>
+          <div class="setting-group"><label class="setting-label">Voice name</label><input id="voice-sample-name" class="setting-input" placeholder="clap1v" maxlength="32"></div>
+        </div>
+        <div class="setting-group"><label class="setting-label">Transcript (optional; used by in-context mode, ignored by x-vector)</label><textarea id="voice-sample-transcript" class="setting-input" rows="2" placeholder="What the clip says"></textarea></div>
+        <div class="setting-group"><div class="checkbox-btn"><input type="checkbox" id="voice-sample-consent"><label for="voice-sample-consent">I own this recording or have permission to use it</label><span class="checkmark"></span></div></div>
+        <div class="button-row"><button class="setting-button" id="voice-sample-upload">Upload</button><div class="status-line" id="voice-sample-status"></div></div>
+        <div class="setting-group" style="margin-top:0.85rem;">
+          <label class="setting-label">Voices on the server</label>
+          <div class="entry-list" id="voice-list"><div class="empty-message">Remote engine only.</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- system.voice.effect -->
+    <div class="terminal-section">
+      <div class="terminal-header-line" data-target="voice-effect-content">
+        <span class="terminal-prompt">&gt; </span>
+        <span class="terminal-command window-title">system.voice.effect</span>
+        <span class="window-control is-open">[_]</span>
+      </div>
+      <div class="window-content" id="voice-effect-content">
+        <p class="lede">Post-processing on every spoken sentence, for any engine. Robot: speaker colouring, ring modulation and bit crush. Restart to apply.</p>
+        <div class="field-row">
+          <div class="setting-group"><label class="setting-label">Effect</label><select id="voice.tts_effect" class="setting-input"><option value="none">none</option><option value="robot">robot</option></select></div>
+          <div class="setting-group"><label class="setting-label">Tone (Hz, 20–200)</label><input id="voice.tts_effect_tone" type="number" min="20" max="200" step="1" class="setting-input"></div>
+        </div>
+        <div class="setting-group"><label class="setting-label spread">Strength <span class="dial-value" id="voice.tts_effect_strength.val">—</span></label><input id="voice.tts_effect_strength" type="range" min="0" max="100" class="dial-slider"></div>
+        <div class="button-row"><button class="setting-button" data-save="voice-effect">Save changes</button><div class="status-line" id="voice-effect-status"></div></div>
+      </div>
+    </div>
+
+    <!-- system.voice.turns -->
+    <div class="terminal-section">
+      <div class="terminal-header-line" data-target="voice-turn-content">
+        <span class="terminal-prompt">&gt; </span>
+        <span class="terminal-command window-title">system.voice.turns</span>
+        <span class="window-control is-open">[_]</span>
+      </div>
+      <div class="window-content" id="voice-turn-content">
+        <p class="lede">When Richard decides you have finished speaking.</p>
+        <div class="setting-group"><label class="setting-label">Realtime endpoint silence (ms)</label><input id="voice.endpoint_silence_ms" type="number" min="100" max="3000" step="50" class="setting-input"><span class="lede" style="margin:0;">Trailing silence that ends an utterance on the realtime API (Reachy, browser voice mode).</span></div>
         <div class="field-row">
           <div class="setting-group"><label class="setting-label">VAD aggressiveness (0–3)</label><input id="voice.vad_aggressiveness" type="number" min="0" max="3" class="setting-input"></div>
           <div class="setting-group"><label class="setting-label">Silence (ms)</label><input id="voice.silence_ms" type="number" min="0" class="setting-input"></div>
         </div>
+        <span class="lede" style="margin:0;">VAD and silence apply to satellites and the local voice loop, not to the realtime API.</span>
+        <div class="button-row"><button class="setting-button" data-save="voice-turn">Save changes</button><div class="status-line" id="voice-turn-status"></div></div>
+      </div>
+    </div>
+
+    <!-- system.voice.mic -->
+    <div class="terminal-section">
+      <div class="terminal-header-line" data-target="voice-mic-content">
+        <span class="terminal-prompt">&gt; </span>
+        <span class="terminal-command window-title">system.voice.mic</span>
+        <span class="window-control is-open">[_]</span>
+      </div>
+      <div class="window-content" id="voice-mic-content">
+        <p class="lede">Only for <code>richard voice</code> on a machine with a microphone. serve does not use these.</p>
         <div class="field-row">
           <div class="setting-group"><label class="setting-label">Sample rate</label><input id="voice.samplerate" type="number" min="8000" class="setting-input"></div>
           <div class="setting-group"><label class="setting-label">Input device</label><input id="voice.input_device" class="setting-input" placeholder="(default)"></div>
         </div>
         <div class="setting-group"><label class="setting-label">Output device</label><input id="voice.output_device" class="setting-input" placeholder="(default)"></div>
-        <div class="button-row"><button class="setting-button" data-save="voice">Save changes</button><div class="status-line" id="voice-status"></div></div>
+        <div class="button-row"><button class="setting-button" data-save="voice-mic">Save changes</button><div class="status-line" id="voice-mic-status"></div></div>
       </div>
     </div>
 
@@ -737,18 +835,28 @@ const FIELDS = [
   {id:'personality.honesty', path:['personality','honesty'], t:'dial', sec:'personality'},
   {id:'personality.directness', path:['personality','directness'], t:'dial', sec:'personality'},
   {id:'personality.system_prompt', path:['personality','system_prompt'], t:'textarea', sec:'personality'},
-  {id:'voice.stt_engine', path:['voice','stt_engine'], t:'sel', sec:'voice'},
-  {id:'voice.stt_model', path:['voice','stt_model'], t:'text', sec:'voice'},
-  {id:'voice.stt_endpoint', path:['voice','stt_endpoint'], t:'url', sec:'voice', nullable:true},
-  {id:'voice.tts_engine', path:['voice','tts_engine'], t:'sel', sec:'voice'},
-  {id:'voice.tts_voice', path:['voice','tts_voice'], t:'text', sec:'voice'},
-  {id:'voice.tts_endpoint', path:['voice','tts_endpoint'], t:'url', sec:'voice', nullable:true},
-  {id:'voice.tts_streaming', path:['voice','tts_streaming'], t:'bool', sec:'voice'},
-  {id:'voice.vad_aggressiveness', path:['voice','vad_aggressiveness'], t:'num', sec:'voice', min:0, max:3},
-  {id:'voice.silence_ms', path:['voice','silence_ms'], t:'num', sec:'voice', min:0},
-  {id:'voice.samplerate', path:['voice','samplerate'], t:'num', sec:'voice', min:8000},
-  {id:'voice.input_device', path:['voice','input_device'], t:'text', sec:'voice', nullable:true},
-  {id:'voice.output_device', path:['voice','output_device'], t:'text', sec:'voice', nullable:true},
+  {id:'voice.stt_engine', path:['voice','stt_engine'], t:'sel', sec:'voice-stt'},
+  {id:'voice.stt_model', path:['voice','stt_model'], t:'text', sec:'voice-stt'},
+  {id:'voice.stt_endpoint', path:['voice','stt_endpoint'], t:'url', sec:'voice-stt', nullable:true},
+  {id:'voice.language', path:['voice','language'], t:'text', sec:'voice-stt'},
+  {id:'voice.tts_engine', path:['voice','tts_engine'], t:'sel', sec:'voice-tts'},
+  {id:'voice.tts_voice', path:['voice','tts_voice'], t:'text', sec:'voice-tts'},
+  {id:'voice.tts_endpoint', path:['voice','tts_endpoint'], t:'url', sec:'voice-tts', nullable:true},
+  {id:'voice.tts_streaming', path:['voice','tts_streaming'], t:'bool', sec:'voice-tts'},
+  {id:'voice.tts_model', path:['voice','tts_model'], t:'text', sec:'voice-tts'},
+  {id:'voice.tts_language', path:['voice','tts_language'], t:'text', sec:'voice-tts'},
+  {id:'voice.tts_instructions', path:['voice','tts_instructions'], t:'text', sec:'voice-tts'},
+  {id:'voice.tts_xvec_only', path:['voice','tts_xvec_only'], t:'bool', sec:'voice-tts'},
+  {id:'voice.tts_task_type', path:['voice','tts_task_type'], t:'sel', sec:'voice-tts'},
+  {id:'voice.tts_effect', path:['voice','tts_effect'], t:'sel', sec:'voice-effect'},
+  {id:'voice.tts_effect_strength', path:['voice','tts_effect_strength'], t:'dial', sec:'voice-effect'},
+  {id:'voice.tts_effect_tone', path:['voice','tts_effect_tone'], t:'num', sec:'voice-effect', min:20, max:200},
+  {id:'voice.endpoint_silence_ms', path:['voice','endpoint_silence_ms'], t:'num', sec:'voice-turn', min:100, max:3000},
+  {id:'voice.vad_aggressiveness', path:['voice','vad_aggressiveness'], t:'num', sec:'voice-turn', min:0, max:3},
+  {id:'voice.silence_ms', path:['voice','silence_ms'], t:'num', sec:'voice-turn', min:0},
+  {id:'voice.samplerate', path:['voice','samplerate'], t:'num', sec:'voice-mic', min:8000},
+  {id:'voice.input_device', path:['voice','input_device'], t:'text', sec:'voice-mic', nullable:true},
+  {id:'voice.output_device', path:['voice','output_device'], t:'text', sec:'voice-mic', nullable:true},
   {id:'home_assistant.enabled', path:['home_assistant','enabled'], t:'bool', sec:'home-assistant'},
   {id:'home_assistant.host', path:['home_assistant','host'], t:'text', sec:'home-assistant', req:true},
   {id:'home_assistant.port', path:['home_assistant','port'], t:'port', sec:'home-assistant'},
@@ -764,7 +872,7 @@ const FIELDS = [
   {id:'web.port', path:['web','port'], t:'port', sec:'web'},
 ];
 const BY_ID = Object.fromEntries(FIELDS.map(f => [f.id, f]));
-const SAVABLE = ['brain','personality','voice','home-assistant','relay','web'];
+const SAVABLE = ['brain','personality','voice-stt','voice-tts','voice-effect','voice-turn','voice-mic','home-assistant','relay','web'];
 let baseline = {};
 
 const $ = id => document.getElementById(id);
@@ -838,6 +946,7 @@ function applyConfig(cfg){
     const t = $('home_assistant.token');
     if (t) t.placeholder = cfg.home_assistant.token_configured ? '(configured — enter to replace)' : '(unset)';
   }
+  reflectRemoteOnly();
   renderReadout(cfg);
 }
 
@@ -927,6 +1036,62 @@ async function refreshHomeAssistant(prefix){
     setStatus('home-assistant', lead + 'test failed: ' + e.message, 'err');
     return null;
   }
+}
+
+function reflectRemoteOnly(){
+  const engine = $('voice.tts_engine');
+  const remote = !!engine && engine.value === 'remote';
+  document.querySelectorAll('[data-remote-only]').forEach(el => el.classList.toggle('remote-only-hidden', !remote));
+}
+
+async function loadVoices(){
+  const options = $('tts-voice-options'); const box = $('voice-list');
+  const engine = $('voice.tts_engine');
+  if (!engine || engine.value !== 'remote') { options.innerHTML = ''; box.innerHTML = '<div class="empty-message">Remote engine only.</div>'; return; }
+  try {
+    const data = await getJSON('/api/voices');
+    const uploaded = Object.fromEntries((data.uploaded || []).map(u => [u.name, u]));
+    options.innerHTML = data.voices.map(v => '<option value="' + esc(v) + '"></option>').join('');
+    box.innerHTML = data.voices.length ? data.voices.map(v => {
+      const meta = uploaded[v] ? ('uploaded' + (uploaded[v].ref_text ? ' · ' + uploaded[v].ref_text.slice(0, 60) : '')) : 'built-in';
+      return '<div class="entry"><div class="entry-main"><div class="entry-name">' + esc(v) + '</div><div class="entry-sub">' + esc(meta) + '</div></div>' +
+        '<button class="setting-button small" data-use-voice="' + esc(v) + '">Use</button></div>';
+    }).join('') : '<div class="empty-message">No voices on the server.</div>';
+  } catch (e) {
+    options.innerHTML = '';
+    box.innerHTML = '<div class="empty-message">' + esc(e.message) + '</div>';
+  }
+}
+
+function useVoice(name){
+  const el = $('voice.tts_voice'); if (!el) return;
+  el.value = name;
+  el.dispatchEvent(new Event('input'));
+}
+
+function readFileBase64(file){
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+    reader.onerror = () => reject(reader.error || new Error('could not read the file'));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function uploadVoiceSample(){
+  const file = ($('voice-sample-file').files || [])[0];
+  const name = $('voice-sample-name').value.trim();
+  if (!file) { setStatus('voice-sample', 'choose an audio file', 'err'); return; }
+  if (!/^[A-Za-z0-9_-]{1,32}$/.test(name)) { setStatus('voice-sample', 'name: letters, digits, _ and -, at most 32', 'err'); return; }
+  if (!$('voice-sample-consent').checked) { setStatus('voice-sample', 'confirm you may use this recording', 'err'); return; }
+  setStatus('voice-sample', 'uploading…', '');
+  try {
+    const audio_base64 = await readFileBase64(file);
+    const data = await sendJSON('/api/voices', 'POST', {name, transcript: $('voice-sample-transcript').value.trim(), filename: file.name, audio_base64});
+    setStatus('voice-sample', 'uploaded ' + data.uploaded + ' · ' + hm() + ' · selected above, save to use it', 'ok');
+    await loadVoices();
+    useVoice(data.uploaded);
+  } catch (e) { setStatus('voice-sample', 'upload failed: ' + e.message, 'err'); }
 }
 
 const MEMORY_COLLAPSED_LIMIT = 12;
@@ -1130,6 +1295,7 @@ async function refreshAll(){
     applyStatus(status);
     applyConfig(cfg);
     renderMemories(memories.memories);
+    try { await loadVoices(); } catch (e) {}
     try { await refreshHomeAssistant(); } catch (e) {}
     try { await refreshControlData(); } catch (e) { setStatus('control-loop', 'unavailable: ' + e.message, 'err'); }
   } catch (e) { setConnected(false); }
@@ -1480,6 +1646,9 @@ for (const f of FIELDS) {
 }
 $('home-assistant-test').addEventListener('click', () => refreshHomeAssistant());
 $('home-assistant-restart').addEventListener('click', rebootServe);
+$('voice.tts_engine').addEventListener('change', () => { reflectRemoteOnly(); loadVoices(); });
+$('voice-sample-upload').addEventListener('click', uploadVoiceSample);
+$('voice-list').addEventListener('click', e => { const b = e.target.closest('[data-use-voice]'); if (b) useVoice(b.dataset.useVoice); });
 $('home-assistant-entity-filter').addEventListener('input', filterHomeAssistantEntities);
 $('memory-add').addEventListener('click', addMemory);
 $('memory-text').addEventListener('keydown', e => { if (e.key === 'Enter') addMemory(); });

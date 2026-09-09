@@ -1184,3 +1184,23 @@ def test_plugins_enable_unknown_name_is_404_and_bad_body_is_400(tmp_path):
     assert app.handle("PUT", "/api/plugins", json.dumps({"name": "ghost", "enabled": True}).encode()).status == 404
     assert app.handle("PUT", "/api/plugins", b"[]").status == 400
     assert app.handle("PUT", "/api/plugins", json.dumps({"enabled": True}).encode()).status == 400
+
+
+def test_web_ui_voice_page_has_sections_upload_and_effect(tmp_path):
+    html = _app(tmp_path).handle("GET", "/").body.decode()
+    assert 'data-panel-content="voice-stt-content voice-tts-content voice-sample-content voice-effect-content voice-turn-content voice-mic-content"' in html
+    for element_id in (
+        "voice.language", "voice.tts_model", "voice.tts_language", "voice.tts_instructions", "voice.tts_xvec_only",
+        "voice.tts_task_type", "voice.tts_effect", "voice.tts_effect_strength", "voice.tts_effect_tone",
+        "voice.endpoint_silence_ms", "voice-sample-file", "voice-sample-name", "voice-sample-transcript",
+        "voice-sample-consent", "voice-sample-upload", "voice-list", "tts-voice-options",
+    ):
+        assert f'id="{element_id}"' in html, element_id
+    for section in ("voice-stt", "voice-tts", "voice-effect", "voice-turn", "voice-mic"):
+        assert f'data-save="{section}"' in html
+        assert f'id="{section}-status"' in html
+    assert "data-remote-only" in html
+    assert "/api/voices" in html
+    assert "function reflectRemoteOnly()" in html
+    assert "async function uploadVoiceSample()" in html
+    assert 'id="voice-content"' not in html
