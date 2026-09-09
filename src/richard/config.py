@@ -126,6 +126,20 @@ class Realtime:
 
 
 @dataclass
+class Plugins:
+    """[plugins] enabled = [...] plus one [plugins.<name>] table per plugin.
+
+    Tables are kept verbatim, including ones Richard does not model, so
+    save_config never drops a plugin's settings."""
+
+    enabled: list[str] = field(default_factory=list)
+    tables: dict[str, dict] = field(default_factory=dict)
+
+    def table(self, name: str) -> dict:
+        return self.tables.setdefault(name, {})
+
+
+@dataclass
 class Config:
     llm_endpoint: str = "http://localhost:8080"
     llm_model: str = "local"
@@ -139,6 +153,7 @@ class Config:
     web: Web = field(default_factory=Web)
     realtime: Realtime = field(default_factory=Realtime)
     brains: dict[str, BrainRole] = field(default_factory=dict)
+    plugins: Plugins = field(default_factory=Plugins)
 
 
 def resolve_brain_role(config: Config, role: str) -> BrainRole:
@@ -168,6 +183,10 @@ def resolve_brain_role(config: Config, role: str) -> BrainRole:
 
 def default_config_path() -> Path:
     return Path.home() / ".richard" / "config.toml"
+
+
+def default_plugins_dir() -> Path:
+    return Path.home() / ".richard" / "plugins"
 
 
 def load_config(path: Path | None = None) -> Config:
@@ -255,6 +274,15 @@ def load_config(path: Path | None = None) -> Config:
             timeout=float(table["timeout"]) if "timeout" in table else None,
             extra_body=dict(table["extra_body"]) if isinstance(table.get("extra_body"), dict) else None,
         )
+    plugins_data = data.get("plugins") or {}
+    plugins = Plugins(
+        enabled=[str(name) for name in (plugins_data.get("enabled") or [])],
+        tables={
+            str(name): dict(table)
+            for name, table in plugins_data.items()
+            if isinstance(table, dict)
+        },
+    )
     config = Config(
         llm_endpoint=data.get("llm_endpoint", Config.llm_endpoint),
         llm_model=data.get("llm_model", Config.llm_model),
@@ -268,6 +296,7 @@ def load_config(path: Path | None = None) -> Config:
         web=web,
         realtime=realtime,
         brains=brains,
+        plugins=plugins,
     )
     # Environment overrides take precedence over the file.
     config.llm_endpoint = os.environ.get("RICHARD_LLM_ENDPOINT", config.llm_endpoint)
@@ -387,6 +416,10 @@ def save_config(config: Config, path: Path | None = None) -> None:
         "port": config.realtime.port,
         "token": config.realtime.token,
     }
+    plugins_table: dict = {"enabled": list(config.plugins.enabled)}
+    for name, table in config.plugins.tables.items():
+        plugins_table[name] = {key: value for key, value in table.items() if value is not None}
+    data["plugins"] = plugins_table
     if config.brains:
         brains_table: dict = {}
         for role_name, role in config.brains.items():

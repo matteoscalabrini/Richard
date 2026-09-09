@@ -2,7 +2,7 @@ import stat
 
 import pytest
 
-from richard.config import Config, HomeAssistant, Personality, clamp_dial, load_config, save_config
+from richard.config import Config, HomeAssistant, Personality, clamp_dial, default_plugins_dir, load_config, save_config
 
 
 def test_load_returns_defaults_when_missing(tmp_path):
@@ -338,3 +338,32 @@ def test_llm_extra_body_roundtrip_and_role_fallback(tmp_path):
     assert resolve_brain_role(loaded, "voice").extra_body == {"chat_template_kwargs": {"reasoning_effort": "medium"}}
     # a role without its own extra_body inherits the top-level one
     assert resolve_brain_role(loaded, "curator").extra_body == {"chat_template_kwargs": {"enable_thinking": False}}
+
+
+def test_plugins_table_round_trips_unknown_names(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text(
+        '[plugins]\nenabled = ["home_assistant", "mystery"]\n\n'
+        '[plugins.home_assistant]\nhost = "ha.local"\nport = 8123\n\n'
+        '[plugins.mystery]\nlevel = 3\nflag = true\n'
+    )
+    config = load_config(path)
+    assert config.plugins.enabled == ["home_assistant", "mystery"]
+    assert config.plugins.tables["mystery"] == {"level": 3, "flag": True}
+    save_config(config, path)
+    again = load_config(path)
+    assert again.plugins.enabled == ["home_assistant", "mystery"]
+    assert again.plugins.tables == {"home_assistant": {"host": "ha.local", "port": 8123}, "mystery": {"level": 3, "flag": True}}
+
+
+def test_plugins_default_empty_and_table_creates_on_demand():
+    config = Config()
+    assert config.plugins.enabled == []
+    assert config.plugins.tables == {}
+    config.plugins.table("reachy")["host"] = "10.99.77.5"
+    assert config.plugins.tables == {"reachy": {"host": "10.99.77.5"}}
+
+
+def test_default_plugins_dir(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert default_plugins_dir() == tmp_path / ".richard" / "plugins"
