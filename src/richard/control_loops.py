@@ -5,12 +5,15 @@ import logging
 import sqlite3
 import threading
 import time
+import traceback
+from collections import deque
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from richard.plugins.base import TargetReader
+from richard.plugins.base import Event, EventSource, TargetReader
 from richard.schedules import describe_schedule, next_run, parse_schedule
 
 
@@ -616,6 +619,7 @@ class ControlLoopMonitor:
         initial_delay_seconds: float = 0.0,
         monotonic: Callable[[], float] = time.monotonic,
         now: Callable[[], datetime] | None = None,
+        event_sources: Iterable[EventSource] = (),
     ) -> None:
         self._store = store
         self._reader = reader
@@ -626,7 +630,18 @@ class ControlLoopMonitor:
         self._wall_now = now or (lambda: datetime.now().astimezone())
         self._next_due: dict[int, float] = {}
         self._stop = threading.Event()
+        self._wake = threading.Event()
         self._thread: threading.Thread | None = None
+        self._event_sources = list(event_sources)
+        self._source_stops: list[Callable[[], None]] = []
+        self._events: deque[Event] = deque()
+        self._events_lock = threading.Lock()
+
+    def push(self, event: Event) -> None:
+        """Entry point for plugin event sources; safe from any thread."""
+        with self._events_lock:
+            self._events.append(event)
+        self._wake.set()  # the polling thread checks on the next wake, not the next second
 
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
@@ -636,9 +651,21 @@ class ControlLoopMonitor:
             target=self._run, name="richard-control-loops", daemon=True
         )
         self._thread.start()
+        for source in self._event_sources:
+            try:
+                self._source_stops.append(source(self.push))
+            except Exception:
+                log.error("event source failed to start:\n%s", traceback.format_exc())
 
     def stop(self, timeout: float = 5.0) -> bool:
+        for stop_source in self._source_stops:
+            try:
+                stop_source()
+            except Exception:
+                log.error("event source failed to stop:\n%s", traceback.format_exc())
+        self._source_stops.clear()
         self._stop.set()
+        self._wake.set()
         if self._thread is not None:
             self._thread.join(timeout=timeout)
             return not self._thread.is_alive()
@@ -649,7 +676,14 @@ class ControlLoopMonitor:
             return
         while not self._stop.is_set():
             self.check_once()
-            self._stop.wait(self._poll_seconds)
+            self._wake.wait(self._poll_seconds)
+            self._wake.clear()
+
+    def _drain_events(self) -> set[str]:
+        with self._events_lock:
+            pushed = list(self._events)
+            self._events.clear()
+        return {event.target for event in pushed}
 
     def check_once(
         self, *, force: bool = False
@@ -661,12 +695,25 @@ class ControlLoopMonitor:
             loop_id: due for loop_id, due in self._next_due.items() if loop_id in active_ids
         }
         changes: list[ControlLoopChange | ControlLoopScheduledCheck] = []
+        # A pushed event is a polled change that does not wait for the interval:
+        # every enabled change loop watching that target is checked now.
+        pushed_targets = self._drain_events()
+        forced_ids: set[int] = set()
+        if pushed_targets:
+            for loop in enabled:
+                if loop.kind == "change" and pushed_targets.intersection(loop.targets):
+                    forced_ids.add(loop.id)
+                    change = self._check_loop(loop)
+                    if change is not None:
+                        changes.append(change)
         wall_now = self._wall_now()
         for loop in enabled:
             if loop.kind == "scheduled":
                 fired = self._check_scheduled(loop, wall_now)
                 if fired is not None:
                     changes.append(fired)
+                continue
+            if loop.id in forced_ids:
                 continue
             if not force and now < self._next_due.get(loop.id, 0.0):
                 continue

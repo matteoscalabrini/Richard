@@ -1,5 +1,6 @@
 import logging
 import sqlite3
+import time
 from datetime import datetime, timezone
 
 import pytest
@@ -10,7 +11,7 @@ from richard.control_loops import (
     ControlTargetReader,
     describe_changes,
 )
-from richard.plugins.base import TargetInfo
+from richard.plugins.base import Event, TargetInfo
 
 
 class FakeReader:
@@ -558,3 +559,56 @@ def test_migration_deletes_kindless_rows_and_logs_once(tmp_path, caplog):
     caplog.clear()
     ControlLoopStore(path).close()
     assert "kindless" not in caplog.text
+
+
+class FakeSource:
+    def __init__(self):
+        self.sink = None
+        self.stopped = False
+
+    def __call__(self, sink):
+        self.sink = sink
+        return lambda: setattr(self, "stopped", True)
+
+
+def _monitor_with_source(tmp_path, clock):
+    store = ControlLoopStore(tmp_path / "loops.db")
+    reader = _StubReader(snapshots={"fake:x": {"name": "X", "state": "absent", "attributes": {}}})
+    loop = store.create(name="face", targets=["fake:x"], trigger_description="when present", interval_seconds=3600)
+    source = FakeSource()
+    notified = []
+    monitor = ControlLoopMonitor(store, reader, lambda change: notified.append(change) or "seen", monotonic=clock, event_sources=[source])
+    return store, reader, loop, source, notified, monitor
+
+
+def test_pushed_event_force_checks_the_watching_loop(tmp_path):
+    now = [1000.0]
+    store, reader, loop, source, notified, monitor = _monitor_with_source(tmp_path, lambda: now[0])
+    monitor.check_once()  # baseline snapshot, nothing to notify
+    assert notified == []
+    reader.snapshots["fake:x"]["state"] = "present"
+    assert monitor.check_once() == []  # interval (1 h) not elapsed: polling would wait
+    monitor.push(Event(kind="fake", target="fake:x", payload={"state": "present"}))
+    changes = monitor.check_once()
+    assert len(changes) == 1 and changes[0].loop.id == loop.id
+    assert notified and "present" in notified[0].llm_prompt()
+    store.close()
+
+
+def test_start_subscribes_sources_and_stop_unsubscribes(tmp_path):
+    store, reader, loop, source, notified, monitor = _monitor_with_source(tmp_path, time.monotonic)
+    monitor.start()
+    try:
+        assert source.sink == monitor.push
+    finally:
+        assert monitor.stop()
+    assert source.stopped
+    store.close()
+
+
+def test_event_for_an_unwatched_target_is_ignored(tmp_path):
+    store, reader, loop, source, notified, monitor = _monitor_with_source(tmp_path, lambda: 5.0)
+    monitor.check_once()
+    monitor.push(Event(kind="fake", target="fake:other"))
+    assert monitor.check_once() == []
+    store.close()

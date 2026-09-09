@@ -362,7 +362,8 @@ def _run_chat() -> int:
             config.personality,
         )
         monitor = _start_control_loop_monitor(
-            control_store, control_reader, lambda: engine
+            control_store, control_reader, lambda: engine,
+            event_sources=registry.event_sources(),
         )
         run_repl(engine, Conversation())
     finally:
@@ -542,7 +543,7 @@ def _build_control_loops(registry):
 
 
 def _start_control_loop_monitor(
-    store, reader, engine_factory, *, initial_delay_seconds: float = 0.0
+    store, reader, engine_factory, *, initial_delay_seconds: float = 0.0, event_sources=()
 ):
     from richard.control_loops import ControlLoopMonitor
 
@@ -552,7 +553,8 @@ def _start_control_loop_monitor(
         return engine_factory().respond(conversation)
 
     monitor = ControlLoopMonitor(
-        store, reader, notify, initial_delay_seconds=initial_delay_seconds
+        store, reader, notify, initial_delay_seconds=initial_delay_seconds,
+        event_sources=event_sources,
     )
     monitor.start()
     return monitor
@@ -596,7 +598,8 @@ def _run_voice(write: Callable[[str], None] = print) -> int:
             brain, providers, config.personality
         )
         monitor = _start_control_loop_monitor(
-            control_store, control_reader, lambda: engine
+            control_store, control_reader, lambda: engine,
+            event_sources=registry.event_sources(),
         )
         stt = _build_stt(config)
 
@@ -741,9 +744,10 @@ def _run_serve(write: Callable[[str], None] = print) -> int:
         control_store,
         control_reader,
         _control_engine,
-        # Give Home Assistant and satellite reconnects a moment to settle before
+        # Give device connections and satellite reconnects a moment to settle before
         # comparing against the last snapshot from the previous process.
         initial_delay_seconds=10.0,
+        event_sources=registry.event_sources(),
     )
 
     web_ssl = None
