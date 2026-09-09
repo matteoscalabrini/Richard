@@ -15,7 +15,7 @@ class FakeBrain:
         self.calls = []
 
     def complete(self, messages, tools=None):
-        self.calls.append((messages, tools))
+        self.calls.append((list(messages), tools))
         return self._completions.pop(0)
 
     def chat(self, messages):
@@ -233,3 +233,49 @@ def test_respond_does_not_nudge_without_tools():
     engine = Engine(brain, [], Personality())
     assert engine.respond(Conversation()) == "I'll get to it."
     assert len(brain.calls) == 1
+
+
+def test_tool_round_is_persisted_so_the_next_turn_replays_the_served_prefix():
+    # The prompt cache on the box only helps when turn N+1 starts with the exact
+    # message sequence served in turn N. Dropping the tool round from history
+    # (2026-09-09, 27B natural run, turn 4) cost a full prefill after every tool call.
+    brain = FakeBrain(
+        [
+            Completion(content=None, tool_calls=[ToolCall(id="1", name="remember", arguments={"text": "likes tea"})]),
+            Completion(content="Noted.", tool_calls=[]),
+            Completion(content="Sure.", tool_calls=[]),
+        ]
+    )
+    engine, _ = _engine(brain)
+    convo = Conversation()
+    convo.add_user("I like tea")
+    convo.add_assistant(engine.respond(convo))
+    convo.add_user("And biscuits")
+    engine.respond(convo)
+    served_round = brain.calls[1][0]  # turn 1, second request: system, user, tool call, tool result
+    assert [m["role"] for m in served_round] == ["system", "user", "assistant", "tool"]
+    next_turn = brain.calls[2][0]
+    assert next_turn[: len(served_round)] == served_round
+    assert next_turn[len(served_round):] == [
+        {"role": "assistant", "content": "Noted."},
+        {"role": "user", "content": "And biscuits"},
+    ]
+
+
+def test_system_head_is_pinned_per_conversation_not_per_engine():
+    brain = FakeBrain(
+        [
+            Completion(content=None, tool_calls=[ToolCall(id="1", name="remember", arguments={"text": "likes tea"})]),
+            Completion(content="Noted.", tool_calls=[]),
+            Completion(content="Hi.", tool_calls=[]),
+        ]
+    )
+    engine, _ = _engine(brain)
+    first = Conversation()
+    first.add_user("I like tea")
+    engine.respond(first)
+    later = Conversation()
+    later.add_user("hello")
+    engine.respond(later)
+    assert "likes tea" not in brain.calls[1][0][0]["content"]  # same conversation: head unchanged
+    assert "likes tea" in brain.calls[2][0][0]["content"]  # new conversation: fresh head

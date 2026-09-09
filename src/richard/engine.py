@@ -80,6 +80,12 @@ class Engine:
                 sections.append(ctx)
         return "\n\n".join(sections)
 
+    def _head(self, conversation: Conversation) -> str:
+        """System prompt for this conversation, assembled once and then byte-stable."""
+        if conversation.pinned_head is None:
+            conversation.pinned_head = self._system_prompt()
+        return conversation.pinned_head
+
     def _execute(self, name: str, arguments: dict) -> str:
         for provider in self._providers:
             if any(s["function"]["name"] == name for s in provider.schemas()):
@@ -91,9 +97,28 @@ class Engine:
                     return f"Tool {name} failed: {exc}"
         return f"Unknown tool: {name}."
 
+    def _record_tool_round(
+        self, conversation: Conversation, working: list[dict], completion: Completion
+    ) -> None:
+        """Execute the calls and append the round to both the request and the history.
+
+        The round is persisted verbatim (see Message): the next turn must replay the
+        exact served prefix or the prompt cache misses and the whole prompt is
+        re-prefilled (measured 2026-09-09: ~2 s per turn after every tool call). The
+        nudge round is deliberately not persisted; it is rare and a fake user message
+        in history would mislead later turns.
+        """
+        tool_message = _assistant_tool_call_message(completion)
+        working.append(tool_message)
+        conversation.add_tool_call(tool_message["content"], tool_message["tool_calls"])
+        for call in completion.tool_calls:
+            result = self._execute(call.name, call.arguments)
+            working.append({"role": "tool", "tool_call_id": call.id, "content": result})
+            conversation.add_tool_result(call.id, result)
+
     def respond(self, conversation: Conversation) -> str:
-        working: list[dict] = [{"role": "system", "content": self._system_prompt()}]
-        working += [{"role": m.role, "content": m.content} for m in conversation.history()]
+        working: list[dict] = [{"role": "system", "content": self._head(conversation)}]
+        working += [m.to_chat() for m in conversation.history()]
         schemas = [s for provider in self._providers for s in provider.schemas()]
         last_content = ""
         any_tool_call = False
@@ -122,15 +147,12 @@ class Engine:
                     continue
                 return content or last_content
             any_tool_call = True
-            working.append(_assistant_tool_call_message(completion))
-            for call in completion.tool_calls:
-                result = self._execute(call.name, call.arguments)
-                working.append({"role": "tool", "tool_call_id": call.id, "content": result})
+            self._record_tool_round(conversation, working, completion)
         return last_content or "Sorry, I got a bit tangled up."
 
     def respond_streaming(self, conversation: Conversation) -> Iterator[str]:
-        working: list[dict] = [{"role": "system", "content": self._system_prompt()}]
-        working += [{"role": m.role, "content": m.content} for m in conversation.history()]
+        working: list[dict] = [{"role": "system", "content": self._head(conversation)}]
+        working += [m.to_chat() for m in conversation.history()]
         schemas = [s for provider in self._providers for s in provider.schemas()]
         any_tool_call = False
         nudged = False
@@ -169,15 +191,8 @@ class Engine:
                     continue
                 return
             any_tool_call = True
-            working.append(
-                _assistant_tool_call_message(
-                    Completion(content=spoken or None, tool_calls=tool_calls)
-                )
+            self._record_tool_round(
+                conversation, working, Completion(content=spoken or None, tool_calls=tool_calls)
             )
-            for call in tool_calls:
-                result = self._execute(call.name, call.arguments)
-                working.append(
-                    {"role": "tool", "tool_call_id": call.id, "content": result}
-                )
         # max_rounds exhausted: the generator just stops; the caller (voice loop) is
         # responsible for any fallback. (respond() returns an error string here instead.)

@@ -162,3 +162,25 @@ def test_streaming_plain_reply_is_not_nudged():
     convo.add_user("x")
     assert "".join(engine.respond_streaming(convo)) == "The fan is off."
     assert len(brain.calls) == 1
+
+
+def test_streaming_tool_round_is_persisted_for_the_next_turn():
+    brain = FakeBrain([
+        {"tool_calls": [ToolCall(id="1", name="set_fan", arguments={"on": True})]},
+        {"deltas": ["Fan's on."]},
+        {"deltas": ["Sure."]},
+    ])
+    engine = Engine(brain, [FakeProvider()], Personality())
+    convo = Conversation()
+    convo.add_user("fan on")
+    convo.add_assistant("".join(engine.respond_streaming(convo)))
+    convo.add_user("thanks")
+    list(engine.respond_streaming(convo))
+    served_round = brain.calls[1]
+    assert [m["role"] for m in served_round] == ["system", "user", "assistant", "tool"]
+    next_turn = brain.calls[2]
+    assert next_turn[: len(served_round)] == served_round
+    assert next_turn[len(served_round):] == [
+        {"role": "assistant", "content": "Fan's on."},
+        {"role": "user", "content": "thanks"},
+    ]
