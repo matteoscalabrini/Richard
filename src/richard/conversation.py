@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 
 DEFAULT_SYSTEM_PROMPT = (
@@ -77,6 +78,31 @@ class Conversation:
 
     def add_tool_result(self, tool_call_id: str, content: str) -> None:
         self._history.append(Message(role="tool", content=content, tool_call_id=tool_call_id))
+
+    def pending_client_calls(self) -> list[str]:
+        """Ids of the calls in the most recent tool round that have no tool result yet.
+
+        Server-owned calls get their result appended by the engine in the same turn, so
+        anything left pending was handed to the client (a `camera` on the robot or in
+        the browser). A plain assistant reply closes the matter: nothing before it is pending.
+        """
+        answered: set[str] = set()
+        for message in reversed(self._history):
+            if message.role == "tool" and message.tool_call_id:
+                answered.add(message.tool_call_id)
+            elif message.role == "assistant" and message.tool_calls:
+                return [c["id"] for c in message.tool_calls if c.get("id") not in answered]
+            elif message.role == "assistant":
+                return []
+        return []
+
+    def seal_pending(self, reason: str) -> list[str]:
+        """Append an error result for every pending call so the served prefix is well formed
+        (a tool call without a result confuses chat templates). Returns the sealed ids."""
+        ids = self.pending_client_calls()
+        for call_id in ids:
+            self.add_tool_result(call_id, json.dumps({"error": reason}))
+        return ids
 
     def messages(self) -> list[Message]:
         return [Message(role="system", content=self._system_prompt), *self._history]

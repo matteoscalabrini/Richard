@@ -82,3 +82,52 @@ def test_message_text_joins_text_parts_only():
     assert Message("user", user_parts("look here", [IMG])).text() == "look here"
     assert Message("user", user_parts(None, [IMG])).text() == ""
     assert Message("assistant", None).text() == ""
+
+
+import json  # noqa: E402
+
+CALLS = [{"id": "c1", "type": "function", "function": {"name": "camera", "arguments": '{"question": "what"}'}}]
+
+
+def test_pending_client_calls_lists_unanswered_calls_of_last_round():
+    convo = Conversation(system_prompt="sys")
+    convo.add_user("look")
+    convo.add_tool_call("Let me look.", CALLS)
+    assert convo.pending_client_calls() == ["c1"]
+    convo.add_tool_result("c1", '{"image_attached": true}')
+    assert convo.pending_client_calls() == []
+
+
+def test_pending_client_calls_is_empty_after_a_plain_reply_and_on_fresh_conversations():
+    convo = Conversation(system_prompt="sys")
+    assert convo.pending_client_calls() == []
+    convo.add_user("hi")
+    convo.add_tool_call(None, CALLS)
+    convo.add_tool_result("c1", "ok")
+    convo.add_user(user_parts(None, [IMG]))
+    convo.add_assistant("A mug.")
+    assert convo.pending_client_calls() == []
+
+
+def test_pending_client_calls_handles_partially_answered_rounds():
+    calls = [
+        {"id": "a", "type": "function", "function": {"name": "remember", "arguments": "{}"}},
+        {"id": "b", "type": "function", "function": {"name": "camera", "arguments": "{}"}},
+    ]
+    convo = Conversation(system_prompt="sys")
+    convo.add_user("hi")
+    convo.add_tool_call(None, calls)
+    convo.add_tool_result("a", "Remembered.")
+    assert convo.pending_client_calls() == ["b"]
+
+
+def test_seal_pending_appends_error_results_and_returns_ids():
+    convo = Conversation(system_prompt="sys")
+    convo.add_user("look")
+    convo.add_tool_call(None, CALLS)
+    assert convo.seal_pending("no result from client") == ["c1"]
+    last = convo.history()[-1]
+    assert last.role == "tool" and last.tool_call_id == "c1"
+    assert json.loads(last.content) == {"error": "no result from client"}
+    assert convo.pending_client_calls() == []
+    assert convo.seal_pending("again") == []
