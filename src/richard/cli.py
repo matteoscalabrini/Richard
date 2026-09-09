@@ -673,6 +673,12 @@ def _configure_logging(level: int = logging.INFO) -> logging.Logger:
     return logger
 
 
+def _perception_service_of(registry):
+    """The running PerceptionService when the perception plugin is enabled and built."""
+    plugin = registry.plugin("perception")
+    return getattr(plugin, "service", None) if plugin is not None else None
+
+
 def _run_serve(write: Callable[[str], None] = print) -> int:
     _configure_logging()
     config = load_config()
@@ -699,6 +705,15 @@ def _run_serve(write: Callable[[str], None] = print) -> int:
     memory_provider = MemoryProvider(memory_store)
     relays = RelayRegistry()
     registry = _build_plugins(config, write)
+
+    from richard.realtime.registry import SessionRegistry
+
+    session_registry = SessionRegistry()
+    perception_service = _perception_service_of(registry)
+    if perception_service is not None:
+        # Admitted events go into an open realtime conversation as [perception] context;
+        # with no session open they fall through to the control-loop monitor and the log.
+        perception_service.set_context_sink(session_registry.offer_context)
 
     control_store, control_reader, control_provider = _build_control_loops(registry)
     # One diagnostics service for the whole serve assembly: satellite turns and the
@@ -764,6 +779,7 @@ def _run_serve(write: Callable[[str], None] = print) -> int:
             restart=_restart,
             engine_factory=_chat_engine,
             voice_turn=voice_turn,
+            perception=lambda: _perception_service_of(registry),
         )
 
     def _control_engine():
@@ -809,6 +825,7 @@ def _run_serve(write: Callable[[str], None] = print) -> int:
             factory = _realtime_session_factory(
                 config, brain=brain, providers_fn=_serve_providers, synth=synth,
                 transcriber=transcriber, vad_factory=lambda: SileroVAD(silero_path),
+                registry=session_registry,
             )
             realtime_coro = _serve_realtime_guarded(
                 serve_realtime(

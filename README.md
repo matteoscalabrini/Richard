@@ -76,6 +76,9 @@ ask *"why didn't the kitchen light turn on?"*
   the protocol shape can point at your box.
 - **Vision** — attach a picture in the web UI, or let Richard look through the webcam in
   voice mode; the brain sees the picture as an OpenAI content part. See [`docs/vision.md`](docs/vision.md).
+- **Ambient perception** — with the `perception` plugin Richard watches the camera
+  continuously, notices who arrives and leaves (recognition is opt-in and local), and is told
+  only about transitions. See [`docs/perception.md`](docs/perception.md).
 - **Multi-room satellites** — any mic + speaker device that speaks Richard's small
   WebSocket protocol becomes a voice satellite, playing replies sentence-by-sentence while
   Richard is still thinking.

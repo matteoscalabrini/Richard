@@ -515,3 +515,16 @@ def test_configure_logging_raises_richard_namespace_to_info_once(capsys):
     assert len([h for h in logger.handlers if getattr(h, "_richard_serve", False)]) == 1
     logging.getLogger("richard.vision").info("vision: probe")
     assert "richard.vision: vision: probe" in capsys.readouterr().err
+
+
+def test_serve_wiring_helper_finds_the_perception_service():
+    from richard.cli import _perception_service_of
+    from richard.plugins.perception import PerceptionPlugin
+    from richard.plugins.registry import PluginRegistry
+
+    plugin = PerceptionPlugin(detector_factory=lambda s, w: None, identifier_factory=lambda s, g, w: None)
+    registry = PluginRegistry([plugin])
+    assert _perception_service_of(registry) is None  # not built
+    registry.build(["perception"], {}, persona_name="R", data_dir=__import__("tempfile").mkdtemp(), write=lambda s: None)
+    assert _perception_service_of(registry) is plugin.service
+    registry.shutdown()
