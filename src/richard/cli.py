@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import subprocess
 import sys
 from pathlib import Path
@@ -657,7 +658,23 @@ def _run_voice(write: Callable[[str], None] = print) -> int:
     return 0
 
 
+def _configure_logging(level: int = logging.INFO) -> logging.Logger:
+    """`richard serve` runs under systemd: INFO lines on the `richard` loggers (vision
+    telemetry, later the per-turn latency line) must reach the journal. Only the `richard`
+    namespace is raised, so httpx and websockets stay quiet. Idempotent; propagation is
+    left on (the root has no handlers in production, and tests capture through it)."""
+    logger = logging.getLogger("richard")
+    if not any(getattr(h, "_richard_serve", False) for h in logger.handlers):
+        handler = logging.StreamHandler(sys.stderr)
+        handler.setFormatter(logging.Formatter("%(name)s: %(message)s"))
+        handler._richard_serve = True  # type: ignore[attr-defined]
+        logger.addHandler(handler)
+    logger.setLevel(level)
+    return logger
+
+
 def _run_serve(write: Callable[[str], None] = print) -> int:
+    _configure_logging()
     config = load_config()
     missing = _serve_deps_available(config.voice.stt_engine, config.voice.tts_engine)
     if missing:

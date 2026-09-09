@@ -502,3 +502,16 @@ def test_serve_passes_the_registry_records_to_the_web_app():
 
     source = inspect.getsource(cli._run_serve)
     assert "plugin_records=registry.records" in source
+
+
+def test_configure_logging_raises_richard_namespace_to_info_once(capsys):
+    import logging
+
+    from richard.cli import _configure_logging
+
+    logger = _configure_logging()
+    _configure_logging()  # idempotent: one handler, not two
+    assert logger.level == logging.INFO
+    assert len([h for h in logger.handlers if getattr(h, "_richard_serve", False)]) == 1
+    logging.getLogger("richard.vision").info("vision: probe")
+    assert "richard.vision: vision: probe" in capsys.readouterr().err
