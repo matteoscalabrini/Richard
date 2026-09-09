@@ -418,10 +418,11 @@ def _build_home_assistant_provider(config, write: Callable[[str], None] = print)
 def _build_diagnostics(home_assistant=None):
     """One diagnostics service per runtime assembly."""
     from richard.diagnostics import DiagnosticsService
+    from richard.plugins.home_assistant.reader import HomeAssistantTargetReader
 
-    return DiagnosticsService(
-        home_assistant=home_assistant.client if home_assistant is not None else None,
-    )
+    client = home_assistant.client if home_assistant is not None else None
+    readers = {"ha": HomeAssistantTargetReader(client)} if client is not None else {}
+    return DiagnosticsService(readers=readers)
 
 
 def _engine_providers(*, memory_provider, home_assistant, control_provider, diagnostics):

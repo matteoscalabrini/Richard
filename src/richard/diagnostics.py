@@ -1,56 +1,58 @@
-"""Proactive diagnostics over the live Home Assistant inventory.
+"""Proactive diagnostics over the live inventory of every target source.
 
 Richard's cached view of the world tells you what was seen, not what is true right
-now. This module is the layer that goes and looks — fetching the live Home Assistant
-inventory and reading individual entities on demand. It backs the LLM's diagnostic
-tools, so "check my devices" does real work instead of trusting a stale list.
+now. This module is the layer that goes and looks — asking each enabled plugin's
+target reader for its live inventory and reading individual targets on demand. It
+backs the LLM's diagnostic tools, so "check my devices" does real work instead of
+trusting a stale list.
 
-Nothing here is persisted: Home Assistant entities are never copied into SQLite.
+Nothing here is persisted: targets are never copied into SQLite.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from richard.verification import (
-    HOME_ASSISTANT,
-    VerificationResult,
-    VerificationStatus,
-    failed,
-    judge,
-)
-
-
-def _key(identifier: str) -> str:
-    return f"ha:{identifier}"
+from richard.plugins.base import TargetReader
+from richard.verification import VerificationResult, VerificationStatus
 
 
 @dataclass(frozen=True)
 class Match:
-    """One resolved Home Assistant entity."""
+    """One resolved target."""
 
+    kind: str
     identifier: str
     name: str
 
     @property
     def key(self) -> str:
-        return _key(self.identifier)
+        return f"{self.kind}:{self.identifier}"
+
+
+@dataclass(frozen=True)
+class SourceReport:
+    kind: str
+    reachable: bool
+    target_count: int = 0
+    error: str | None = None
 
 
 @dataclass(frozen=True)
 class RefreshReport:
     status: str  # ok | partial
-    ha_configured: bool = False
-    ha_reachable: bool = False
-    ha_entity_count: int = 0
-    ha_error: str | None = None
+    sources: tuple[SourceReport, ...] = ()
 
     def summary(self) -> str:
-        if not self.ha_configured:
-            return "Home Assistant is not configured."
-        if self.ha_error:
-            return f"Home Assistant: unreachable ({self.ha_error})"
-        return f"Home Assistant: {self.ha_entity_count} entities"
+        if not self.sources:
+            return "No target sources are configured."
+        parts = []
+        for source in self.sources:
+            if source.reachable:
+                parts.append(f"{source.kind}: {source.target_count} targets")
+            else:
+                parts.append(f"{source.kind}: unreachable ({source.error})")
+        return "; ".join(parts)
 
 
 @dataclass(frozen=True)
@@ -65,16 +67,18 @@ class Diagnosis:
     def message(self) -> str:
         if self.ambiguous:
             return (
-                f"'{self.name}' matches more than one target: {', '.join(self.ambiguous)}. "
+                f"'{self.target}' matches more than one target: {', '.join(self.ambiguous)}. "
                 "Ask which one before doing anything."
             )
-        if self.target is None:
+        if self.name is None:
             return self.error or "I don't see that target."
-        head = f"{self.name} ({_key(self.target)}) via Home Assistant API"
+        head = f"{self.name} ({self.target})"
         if not self.reachable:
             return f"{head}: not responding — {self.error}."
-        state = ", ".join(f"{k}={v}" for k, v in (self.state or {}).items()) or "no state"
-        return f"{head}: responding. State: {state}."
+        snapshot = self.state or {}
+        details = [f"state={snapshot.get('state')}"]
+        details.extend(f"{k}={v}" for k, v in (snapshot.get("attributes") or {}).items())
+        return f"{head}: responding. State: {', '.join(details)}."
 
 
 def _tool(name: str, description: str, properties: dict, required: list[str]) -> dict:
@@ -92,20 +96,22 @@ def _tool(name: str, description: str, properties: dict, required: list[str]) ->
     }
 
 
+_TARGET_DESCRIPTION = "A target as kind:id (for example ha:light.kitchen) or a friendly name."
+
 REFRESH_SCHEMA = _tool(
     "refresh_devices",
-    "Fetch the live Home Assistant inventory for real. Use when asked to refresh, "
-    "or when the cached list looks stale or wrong.",
+    "Fetch the live inventory of every connected target source for real. Use when "
+    "asked to refresh, or when the cached list looks stale or wrong.",
     {},
     [],
 )
 
 DIAGNOSE_SCHEMA = _tool(
     "diagnose_target",
-    "Inspect one entity: its exact identifier, whether it responds right now, its "
+    "Inspect one target: its exact identifier, whether it responds right now, its "
     "live state, and any error. Use when asked why something didn't work.",
     {
-        "target": {"type": "string", "description": "An entity id or friendly name."},
+        "target": {"type": "string", "description": _TARGET_DESCRIPTION},
     },
     ["target"],
 )
@@ -115,7 +121,7 @@ VERIFY_SCHEMA = _tool(
     "Read a target's live state and check it against what you expect, without changing "
     "anything. Use to confirm a claim before making it.",
     {
-        "target": {"type": "string", "description": "An entity id or friendly name."},
+        "target": {"type": "string", "description": _TARGET_DESCRIPTION},
         "expected": {
             "type": "object",
             "description": (
@@ -130,117 +136,94 @@ VERIFY_SCHEMA = _tool(
 
 
 class DiagnosticsService:
-    """Live checks over the Home Assistant inventory."""
+    """Live checks over every target source the enabled plugins provide."""
 
-    def __init__(self, home_assistant=None) -> None:
-        self._home_assistant = home_assistant
+    def __init__(self, readers: dict[str, TargetReader] | None = None) -> None:
+        self._readers: dict[str, TargetReader] = dict(readers or {})
 
     # --- refresh ---
 
     def refresh(self) -> RefreshReport:
-        """Fetch the live inventory and report. Blocking by design — callers run it
-        off the event loop."""
-        if self._home_assistant is None:
-            return RefreshReport(status="partial", ha_configured=False)
-        try:
-            entities = self._home_assistant.list_entities()
-        except Exception as exc:  # noqa: BLE001 — an unreachable HA is a report, not a crash
-            return RefreshReport(
-                status="partial", ha_configured=True, ha_reachable=False, ha_error=str(exc)
-            )
-        return RefreshReport(
-            status="ok",
-            ha_configured=True,
-            ha_reachable=True,
-            ha_entity_count=len(entities),
-        )
+        """Ask each source for its live inventory and report. Blocking by design —
+        callers run it off the event loop."""
+        sources = []
+        for kind, reader in self._readers.items():
+            try:
+                count = len(reader.list_targets())
+            except Exception as exc:  # noqa: BLE001 — an unreachable source is a report, not a crash
+                sources.append(SourceReport(kind=kind, reachable=False, error=str(exc)))
+            else:
+                sources.append(SourceReport(kind=kind, reachable=True, target_count=count))
+        status = "ok" if all(s.reachable for s in sources) else "partial"
+        return RefreshReport(status=status, sources=tuple(sources))
 
     # --- resolution ---
 
-    def _entities(self) -> tuple[list, str | None]:
-        if self._home_assistant is None:
-            return [], None
-        try:
-            return list(self._home_assistant.list_entities()), None
-        except Exception as exc:  # noqa: BLE001
-            return [], str(exc)
-
     def _resolve(self, target: str) -> tuple[list[Match], str | None]:
-        """Find a target in the inventory. Exact id/name matches win outright;
-        only if none match does it fall back to a substring search."""
+        """Find a target across every source. A `kind:id` key is looked up in that
+        source only; otherwise exact id/name matches win outright, and only if none
+        match does it fall back to a substring search."""
+        kind, separator, identifier = target.partition(":")
+        if separator and kind in self._readers:
+            try:
+                infos = self._readers[kind].list_targets()
+            except Exception as exc:  # noqa: BLE001
+                return [], str(exc)
+            return [Match(kind, i.id, i.name) for i in infos if i.id == identifier], None
+        if separator and kind and " " not in kind:
+            return [], f"Unknown target source: {kind}"
         needle = target.strip().lower()
         if not needle:
-            return [], "An entity id or name is required."
-        entities, ha_error = self._entities()
-
+            return [], "A target id or name is required."
         exact: list[Match] = []
         partial: list[Match] = []
-        for entity in entities:
-            match = Match(entity.entity_id, entity.name)
-            if needle in {entity.entity_id.lower(), entity.name.lower(), match.key.lower()}:
-                exact.append(match)
-            elif needle in entity.entity_id.lower() or needle in entity.name.lower():
-                partial.append(match)
-        return (exact or partial), ha_error
+        for kind_name, reader in self._readers.items():
+            try:
+                infos = reader.list_targets()
+            except Exception as exc:  # noqa: BLE001
+                return [], str(exc)
+            for info in infos:
+                match = Match(kind_name, info.id, info.name)
+                if needle in {info.id.lower(), info.name.lower(), match.key.lower()}:
+                    exact.append(match)
+                elif needle in info.id.lower() or needle in info.name.lower():
+                    partial.append(match)
+        return (exact or partial), None
 
     # --- diagnose ---
 
     def diagnose(self, target: str) -> Diagnosis:
-        matches, ha_error = self._resolve(target)
+        matches, error = self._resolve(target)
+        if error:
+            return Diagnosis(target=target, error=error)
         if not matches:
-            detail = f", and could not check Home Assistant: {ha_error}" if ha_error else ""
-            return Diagnosis(name=target, error=f"I don't see a target called '{target}'{detail}.")
+            return Diagnosis(target=target, error=f"No target matches {target}.")
         if len(matches) > 1:
-            return Diagnosis(
-                name=target,
-                ambiguous=tuple(f"{m.name} ({m.key})" for m in matches[:8]),
-            )
-        return self._diagnose_entity(matches[0])
-
-    def _diagnose_entity(self, match: Match) -> Diagnosis:
-        from richard.plugins.home_assistant.provider import entity_snapshot
-
+            return Diagnosis(target=target, ambiguous=tuple(m.key for m in matches[:8]), error="Ambiguous target.")
+        match = matches[0]
         try:
-            entity = self._home_assistant.get_entity(match.identifier)
+            state = self._readers[match.kind].read(match.identifier)
         except Exception as exc:  # noqa: BLE001
-            return Diagnosis(
-                target=match.identifier, name=match.name,
-                reachable=False, error=str(exc),
-            )
-        return Diagnosis(
-            target=entity.entity_id, name=entity.name,
-            reachable=True, state=entity_snapshot(entity),
-        )
+            return Diagnosis(target=match.key, name=match.name, error=str(exc))
+        return Diagnosis(target=match.key, name=match.name, reachable=True, state=state)
 
     # --- verify ---
 
     def verify(self, target: str, expected: dict) -> VerificationResult:
         """Read a target's live state and compare it to `expected`. Never writes."""
-        matches, _ha_error = self._resolve(target)
-        if not matches:
-            return failed(HOME_ASSISTANT, target, target, "verify_target_state", f"I don't see a target called '{target}'")
-        if len(matches) > 1:
-            choices = ", ".join(f"{m.name} ({m.key})" for m in matches[:8])
-            return failed(HOME_ASSISTANT, target, target, "verify_target_state", f"'{target}' matches more than one target: {choices}")
-        return self._verify_entity(matches[0], expected)
-
-    def _verify_entity(self, match: Match, expected: dict) -> VerificationResult:
-        from richard.plugins.home_assistant.provider import entity_snapshot
-
-        def build(status, **kwargs):
+        matches, error = self._resolve(target)
+        if error or not matches:
             return VerificationResult(
-                status=status, source=HOME_ASSISTANT, target=match.identifier,
-                name=match.name, action="verify_target_state", requested=expected, **kwargs,
+                status=VerificationStatus.FAILED, source="diagnostics", target=target, name=target,
+                action="verify", reason=error or f"No target matches {target}.",
             )
-
-        try:
-            entity = self._home_assistant.get_entity(match.identifier)
-        except Exception as exc:  # noqa: BLE001
-            return build(
-                VerificationStatus.UNCONFIRMED,
-                reason=f"{match.name} could not be read ({exc})",
+        if len(matches) > 1:
+            return VerificationResult(
+                status=VerificationStatus.FAILED, source="diagnostics", target=target, name=target,
+                action="verify", reason="Ambiguous target: " + ", ".join(m.key for m in matches[:8]),
             )
-        return judge(build, expected, entity_snapshot(entity), match.name)
+        match = matches[0]
+        return self._readers[match.kind].verify(match.identifier, expected)
 
 
 class DiagnosticsProvider:
@@ -255,10 +238,11 @@ class DiagnosticsProvider:
     def context(self) -> str | None:
         return (
             "You can check devices for real instead of trusting the cached list. "
-            "refresh_devices fetches the live inventory, diagnose_target inspects one "
-            "target, and verify_target_state checks a target's live state without "
-            "changing it. Use them proactively for requests like 'check my devices' or "
-            "'why didn't the kitchen light turn on'.\n"
+            "refresh_devices fetches the live inventory of every connected target source, "
+            "diagnose_target inspects one target, and verify_target_state checks a target's "
+            "live state without changing it. Targets are kind:id (for example "
+            "ha:light.kitchen) or a plain name. Use them proactively for requests like "
+            "'check my devices' or 'why didn't the kitchen light turn on'.\n"
             "Tool results prefixed CONFIRMED, MISMATCH, UNCONFIRMED, or FAILED are "
             "authoritative and override your own expectations. Only CONFIRMED lets you "
             "say something worked. Relay MISMATCH, UNCONFIRMED, and FAILED honestly — "

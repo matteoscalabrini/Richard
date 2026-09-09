@@ -305,12 +305,12 @@ def test_build_diagnostics_uses_the_home_assistant_client_when_present():
         client = "ha-client"
 
     service = cli._build_diagnostics(home_assistant=FakeProvider())
-    assert service._home_assistant == "ha-client"
+    assert list(service._readers) == ["ha"]
 
 
 def test_build_diagnostics_without_home_assistant():
     service = cli._build_diagnostics(home_assistant=None)
-    assert service._home_assistant is None
+    assert service._readers == {}
 
 
 def test_serve_realtime_guarded_swallows_bind_failure():
