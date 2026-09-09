@@ -599,14 +599,14 @@ SPA_HTML = r"""<!DOCTYPE html>
         <span class="window-control is-open">[_]</span>
       </div>
       <div class="window-content" id="voice-sample-content">
-        <p class="lede">Upload a reference clip to the TTS server as a named voice. Mono, 8–15 s, speech only; the file goes up unchanged and the server resamples. Then pick it as the TTS voice above and save.</p>
+        <p class="lede">Upload a reference clip to the TTS server as a named voice. Mono, 8–15 s, speech only; the file goes up unchanged and the server resamples. "Use" saves it as the TTS voice; restart to hear it.</p>
         <div class="field-row">
           <div class="setting-group"><label class="setting-label">Audio file</label><input id="voice-sample-file" type="file" accept="audio/*" class="setting-input"></div>
           <div class="setting-group"><label class="setting-label">Voice name</label><input id="voice-sample-name" class="setting-input" placeholder="clap1v" maxlength="32"></div>
         </div>
         <div class="setting-group"><label class="setting-label">Transcript (optional; used by in-context mode, ignored by x-vector)</label><textarea id="voice-sample-transcript" class="setting-input" rows="2" placeholder="What the clip says"></textarea></div>
         <div class="setting-group"><div class="checkbox-btn"><input type="checkbox" id="voice-sample-consent"><label for="voice-sample-consent">I own this recording or have permission to use it</label><span class="checkmark"></span></div></div>
-        <div class="button-row"><button class="setting-button" id="voice-sample-upload">Upload</button><div class="status-line" id="voice-sample-status"></div></div>
+        <div class="button-row"><button class="setting-button" id="voice-sample-upload">Upload</button><button class="setting-button small" id="voice-sample-restart">Restart to apply</button><div class="status-line" id="voice-sample-status"></div></div>
         <div class="setting-group" style="margin-top:0.85rem;">
           <label class="setting-label">Voices on the server</label>
           <div class="entry-list" id="voice-list"><div class="empty-message">Remote engine only.</div></div>
@@ -1095,10 +1095,15 @@ async function loadVoices(){
   }
 }
 
-function useVoice(name){
+async function useVoice(name){
+  // "Use" means use: set the voice, save the TTS window, and say so next to the list.
   const el = $('voice.tts_voice'); if (!el) return;
   el.value = name;
   el.dispatchEvent(new Event('input'));
+  setStatus('voice-sample', 'saving ' + name + '…', '');
+  await saveSection('voice-tts');
+  if (isDirty(BY_ID['voice.tts_voice'])) setStatus('voice-sample', 'could not save ' + name + ' (see the text-to-speech window)', 'err');
+  else setStatus('voice-sample', name + ' is now the TTS voice · ' + hm() + ' · restart to apply', 'ok');
 }
 
 function readFileBase64(file){
@@ -1120,9 +1125,9 @@ async function uploadVoiceSample(){
   try {
     const audio_base64 = await readFileBase64(file);
     const data = await sendJSON('/api/voices', 'POST', {name, transcript: $('voice-sample-transcript').value.trim(), filename: file.name, audio_base64});
-    setStatus('voice-sample', 'uploaded ' + data.uploaded + ' · ' + hm() + ' · selected above, save to use it', 'ok');
+    setStatus('voice-sample', 'uploaded ' + data.uploaded + ' · ' + hm(), 'ok');
     await loadVoices();
-    useVoice(data.uploaded);
+    await useVoice(data.uploaded);
   } catch (e) { setStatus('voice-sample', 'upload failed: ' + e.message, 'err'); }
 }
 
@@ -1707,6 +1712,7 @@ $('home-assistant-restart').addEventListener('click', rebootServe);
 $('voice.tts_engine').addEventListener('change', () => { reflectRemoteOnly(); loadVoices(); });
 reflectRemoteOnly();  // initial state before /api/config answers
 $('voice-sample-upload').addEventListener('click', uploadVoiceSample);
+$('voice-sample-restart').addEventListener('click', rebootServe);
 $('voice-list').addEventListener('click', e => { const b = e.target.closest('[data-use-voice]'); if (b) useVoice(b.dataset.useVoice); });
 $('plugins-refresh').addEventListener('click', loadPlugins);
 $('plugins-restart').addEventListener('click', rebootServe);

@@ -1208,3 +1208,11 @@ def test_web_ui_has_plugins_and_network_pages(tmp_path):
     assert "/api/plugins" in html
     assert "async function togglePlugin(name, enabled)" in html
     assert "plugin enable/disable" in html  # the serve lede lists what needs a restart
+
+
+def test_web_ui_use_voice_saves_and_offers_restart(tmp_path):
+    html = _app(tmp_path).handle("GET", "/").body.decode()
+    assert "async function useVoice(name)" in html
+    assert "await saveSection('voice-tts')" in html
+    assert 'id="voice-sample-restart"' in html
+    assert "$('voice-sample-restart').addEventListener('click', rebootServe)" in html
