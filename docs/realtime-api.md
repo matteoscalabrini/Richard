@@ -3,7 +3,7 @@
 Richard's voice API: a WebSocket speaking a documented subset of the OpenAI
 Realtime API event vocabulary. Any client that can stream PCM16 and parse JSON
 events can hold a hands-free, interruptible conversation with Richard — the web
-UI uses exactly this API, and it is the contract for future apps.
+UI uses exactly this API, and it is the contract for the Reachy Mini Conversation App.
 
 ## Connection
 
@@ -27,26 +27,28 @@ TLS mirrors the web UI: the same self-signed pair, plaintext ws:// if TLS is off
 | type | fields | effect |
 |---|---|---|
 | `input_audio_buffer.append` | `audio`: base64 PCM16 | feed microphone audio |
-| `conversation.item.create` | `item.content[].{type:"input_text",text}` | typed turn (no STT) |
+| `conversation.item.create` | `item`: `{type:"message", role:"user", content:[{type:"input_text",text} \| {type:"input_image",image_url}]}` or `{type:"function_call_output", call_id, output}` | append to the conversation; **no turn starts** |
+| `response.create` | — | run a turn on the conversation as it stands; `error` with code `conversation_already_has_active_response` while a response is active; an empty response (`response.created` then `response.done`) when nothing is new |
 | `response.cancel` | — | stop the in-flight response |
-| `session.update` | `session.barge_in`: `"vad"\|"wake"\|"off"` | change turn policy (Phase 1: only `barge_in` honored; reply echoes effective settings) |
+| `session.update` | `session.barge_in`: `"vad"\|"wake"\|"off"`; `session.tools`: flat function specs `{type:"function", name, description, parameters}` | change turn policy; register client-side tools (names owned by Richard's providers are dropped and listed in `session.updated.dropped_tools`); other keys are ignored |
 
 ## Server → client events
 
 | type | meaning |
 |---|---|
-| `session.created` / `session.updated` | session id + audio rates / effective settings |
+| `session.created` / `session.updated` | session id + audio rates / effective settings (`barge_in`, `tools`, `dropped_tools`) |
 | `input_audio_buffer.speech_started` / `speech_stopped` | VAD boundary (UI: listening state) |
 | `conversation.item.input_audio_transcription.delta` | **full partial transcript so far** (replace, not append — deviation from OpenAI) |
 | `conversation.item.input_audio_transcription.completed` | final transcript of the user turn |
 | `response.created` | Richard started thinking |
 | `response.output_text.delta` | reply text as it streams |
 | `response.audio.delta` | base64 PCM16 chunk of speech |
+| `response.function_call_arguments.done` | `call_id`, `name`, `arguments` (JSON string): the brain called one of the client's tools; run it, post `function_call_output` (and for a camera, an `input_image` message), then `response.create`. Followed by `response.done`. |
 | `conversation.item.truncated` | reply was interrupted; discard queued audio |
 | `response.done` | `response.status`: `completed` \| `cancelled` \| `failed` |
-| `error` | `error.code` ∈ `invalid_request`, `stt_error`, `tts_error`, `brain_unreachable`, `engine_error`, `internal_error` |
+| `error` | `error.code` ∈ `invalid_request`, `conversation_already_has_active_response`, `stt_error`, `tts_error`, `brain_unreachable`, `brain_rejected_input`, `engine_error`, `internal_error` |
 
-Malformed-but-parseable events (e.g. non-object `session` or `item` fields in valid event types) receive an `error` event with `code: invalid_request`, and the connection survives.
+Malformed-but-parseable events (e.g. non-object `session` or `item` fields in valid event types, a bad image, an unknown `call_id`) receive an `error` event with `code: invalid_request`, and the connection survives.
 
 ## Turn-taking
 
@@ -57,7 +59,25 @@ status `cancelled`) — use client echo cancellation. `"off"`: Richard is deaf
 until `response.done`. `"wake"`: reserved for the Phase 2 wake-word stage;
 currently behaves like `"off"`.
 
+## Client-side tools and pictures (the Reachy app's `camera`)
+
+The sequence the Reachy Mini Conversation App uses, which the web UI's voice mode
+reproduces from the webcam:
+
+1. `session.update` with `tools: [{type:"function", name:"camera", ...}]`
+2. the user speaks; the brain answers "Let me look." and calls `camera`
+3. `response.function_call_arguments.done` `{call_id, name:"camera", arguments}` then `response.done`
+4. client: `conversation.item.create` `{type:"function_call_output", call_id, output:"{\"image_attached\": true}"}`
+5. client: `conversation.item.create` `{type:"message", role:"user", content:[{type:"input_image", image_url:"data:image/jpeg;base64,..."}]}`
+6. client: `response.create` → the brain answers with the picture in view.
+
+Images: `data:image/(jpeg|png|webp);base64,` up to 8 MB decoded; the server does not
+resize (an 800 px long edge is about 474 prompt tokens on the production brain; a 720p
+frame about 1200). A call the client never answers is sealed with `{"error": "no result
+from client"}` before the next turn. A brain that rejects images answers `error`
+`brain_rejected_input` and speaks "I couldn't take that picture in.".
+
 ## Not implemented (deliberately)
 
-Tool events (tools run inside Richard's engine, invisible here), multi-modality,
-out-of-band responses, `input_audio_buffer.commit` (server VAD only).
+Out-of-band responses, `input_audio_buffer.commit` (server VAD only), audio output at
+rates other than the announced one.

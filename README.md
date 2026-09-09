@@ -71,8 +71,11 @@ ask *"why didn't the kitchen light turn on?"*
 
 - **Realtime voice** — an OpenAI-compatible `/v1/realtime` WebSocket subset: 16 kHz
   streaming audio in, Silero VAD endpointing, in-process faster-whisper STT, progressive
-  text + PCM audio out, with true VAD barge-in — talk over Richard and it stops to listen.
-  Anything that speaks the protocol shape can point at your box.
+  text + PCM audio out, with true VAD barge-in — talk over Richard and it stops to listen,
+  client-side tools and pictures (the Reachy Mini app's `camera`). Anything that speaks
+  the protocol shape can point at your box.
+- **Vision** — attach a picture in the web UI, or let Richard look through the webcam in
+  voice mode; the brain sees the picture as an OpenAI content part. See [`docs/vision.md`](docs/vision.md).
 - **Multi-room satellites** — any mic + speaker device that speaks Richard's small
   WebSocket protocol becomes a voice satellite, playing replies sentence-by-sentence while
   Richard is still thinking.
