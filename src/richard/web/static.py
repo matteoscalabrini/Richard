@@ -1703,6 +1703,7 @@ for (const f of FIELDS) {
 $('home-assistant-test').addEventListener('click', () => refreshHomeAssistant());
 $('home-assistant-restart').addEventListener('click', rebootServe);
 $('voice.tts_engine').addEventListener('change', () => { reflectRemoteOnly(); loadVoices(); });
+reflectRemoteOnly();  // initial state before /api/config answers
 $('voice-sample-upload').addEventListener('click', uploadVoiceSample);
 $('voice-list').addEventListener('click', e => { const b = e.target.closest('[data-use-voice]'); if (b) useVoice(b.dataset.useVoice); });
 $('plugins-refresh').addEventListener('click', loadPlugins);
