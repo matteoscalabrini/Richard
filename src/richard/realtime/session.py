@@ -11,14 +11,18 @@ from __future__ import annotations
 import queue
 import threading
 
+from richard import vision
 from richard.conversation import Conversation
-from richard.errors import BrainUnreachable
+from richard.engine import ClientToolCall
+from richard.errors import BrainRejectedInput, BrainUnreachable
 from richard.realtime import events
 from richard.realtime.chunker import ProgressiveChunker
 from richard.realtime.vad import FRAME_BYTES
 
 BRAIN_DOWN_LINE = "I can't reach my brain right now."
 TURN_FAILED_LINE = "Something went wrong on my end."
+IMAGE_REJECTED_LINE = "I couldn't take that picture in."
+NO_CLIENT_RESULT = "no result from client"
 
 
 class RealtimeSession:
@@ -31,6 +35,10 @@ class RealtimeSession:
         self._emit = emit
         self._partial_every = partial_every
         self.barge_in = barge_in
+        # Tools the connected client owns (the Reachy app's camera, the browser's
+        # webcam), as chat-completions schemas. The engine defers their calls to us.
+        self.client_tools: list[dict] = []
+        self.dropped_tools: list[str] = []
         self.conversation = Conversation()
         self.state = "listening"
         self._frames_q: queue.Queue = queue.Queue()
@@ -53,10 +61,42 @@ class RealtimeSession:
         if not self._closed.is_set():
             self._frames_q.put(pcm)
 
-    def create_text_item(self, text: str) -> None:
-        text = (text or "").strip()
-        if text:
-            self._start_turn(lambda: text, announce_transcript=False)
+    def create_item(self, item: dict) -> None:
+        """Append a parsed conversation item (see events.parse_item). Append only: no turn
+        starts until response.create. Raises ValueError when the item cannot be appended."""
+        if item["kind"] == "message":
+            content = item["content"]
+            self.conversation.add_user(content)
+            urls = vision.image_urls(content)
+            if urls:
+                total = vision.count_images(self.conversation.history())
+                for url in urls:
+                    mime, nbytes = vision.check_image_data_url(url)
+                    vision.log_image("client", mime, nbytes, total)
+            return
+        if item["kind"] == "function_call_output":
+            if item["call_id"] not in self.conversation.pending_client_calls():
+                raise ValueError(f"function_call_output: unknown or already answered call_id {item['call_id']}")
+            self.conversation.add_tool_result(item["call_id"], item["output"])
+            return
+        raise ValueError(f"unsupported item kind: {item['kind']}")
+
+    def create_response(self) -> None:
+        """Run a turn on the conversation as it stands (GA semantics)."""
+        if self.state != "listening":
+            self._emit(events.error("conversation already has an active response",
+                                    code=events.ACTIVE_RESPONSE_CODE))
+            return
+        history = self.conversation.history()
+        nothing_new = not history or (
+            history[-1].role == "assistant" and not self.conversation.pending_client_calls()
+        )
+        if nothing_new:
+            response_id = events.new_id("resp")
+            self._emit(events.response_created(response_id))
+            self._emit(events.response_done(response_id))
+            return
+        self._start_turn(None)
 
     def cancel_response(self) -> None:
         self._interrupt.set()
@@ -64,7 +104,14 @@ class RealtimeSession:
     def update(self, patch: dict) -> dict:
         if patch.get("barge_in") in ("vad", "wake", "off"):
             self.barge_in = patch["barge_in"]
-        return {"barge_in": self.barge_in}
+        if "tools" in patch:
+            reserved = set(getattr(self._engine, "tool_names", lambda: [])())
+            self.client_tools, self.dropped_tools = events.tools_to_schemas(patch["tools"], reserved)
+        return {
+            "barge_in": self.barge_in,
+            "tools": [s["function"]["name"] for s in self.client_tools],
+            "dropped_tools": list(self.dropped_tools),
+        }
 
     def close(self) -> None:
         self._closed.set()
@@ -125,14 +172,20 @@ class RealtimeSession:
     # -- turns ------------------------------------------------------------------
 
     def _start_turn(self, get_transcript, *, announce_transcript: bool = True) -> None:
+        """Run a turn on its own thread. `get_transcript` yields the new user text, or is
+        None for a response.create on the conversation as it stands."""
         previous = self._turn_thread
         item_id = self._input_item_id
+        self.state = "thinking"  # claimed now, so a second response.create sees it active
 
         def run() -> None:
             if previous is not None:
                 previous.join(timeout=10.0)  # let an interrupted turn finish truncating
             self._interrupt.clear()  # anything set before this belonged to the previous turn
             self.state = "thinking"
+            if get_transcript is None:
+                self._respond(None)
+                return
             try:
                 transcript = get_transcript()
             except Exception as exc:
@@ -149,27 +202,48 @@ class RealtimeSession:
         self._turn_thread = threading.Thread(target=run, daemon=True)
         self._turn_thread.start()
 
-    def _respond(self, user_text: str) -> None:
-        self.conversation.add_user(user_text)
+    def _respond(self, user_text: str | None) -> None:
+        # A call the client never answered would leave a tool call without a result in
+        # the served prefix; seal it so the model sees the failure instead of a broken prompt.
+        self.conversation.seal_pending(NO_CLIENT_RESULT)
+        if user_text is not None:
+            self.conversation.add_user(user_text)
         response_id = events.new_id("resp")
         self._emit(events.response_created(response_id))
         chunker = ProgressiveChunker()
         full = ""
         status = "completed"
+        handed_to_client = False
         try:
-            for delta in self._engine.respond_streaming(self.conversation):
+            for delta in self._engine.respond_streaming(self.conversation, client_tools=self.client_tools):
                 if self._interrupt.is_set():
                     status = "cancelled"
                     break
+                if isinstance(delta, ClientToolCall):
+                    # The engine recorded the call and ends the turn; the client runs the
+                    # tool and asks for a new response. Speak what was said before it.
+                    handed_to_client = True
+                    tail = chunker.flush()
+                    if tail and not self._speak(response_id, tail):
+                        status = "cancelled"
+                        break
+                    vision.log_client_call(delta.name, delta.arguments)
+                    self._emit(events.function_call_arguments_done(
+                        response_id, delta.id, delta.name, delta.arguments))
+                    continue
                 full += delta
                 self._emit(events.text_delta(response_id, delta))
                 if not all(self._speak(response_id, c) for c in chunker.feed(delta)):
                     status = "cancelled"
                     break
-            if status == "completed":
+            if status == "completed" and not handed_to_client:
                 tail = chunker.flush()
                 if tail and not self._speak(response_id, tail):
                     status = "cancelled"
+        except BrainRejectedInput as exc:
+            status = "failed"
+            self._emit(events.error(str(exc), code="brain_rejected_input"))
+            self._speak(response_id, IMAGE_REJECTED_LINE)
         except BrainUnreachable:
             status = "failed"
             self._emit(events.error("brain unreachable", code="brain_unreachable"))
@@ -179,12 +253,17 @@ class RealtimeSession:
             self._emit(events.error(f"engine failed: {exc}", code="engine_error"))
             # Audible failure: silence here reads as a crash to the user.
             self._speak(response_id, TURN_FAILED_LINE)
-        if full:
+        # A turn handed to the client already stored its text inside the tool-call
+        # message; storing it again would put a plain reply after the call.
+        if full and not handed_to_client:
             self.conversation.add_assistant(full)
         if status == "cancelled":
             self._emit(events.item_truncated(response_id))
-        self._emit(events.response_done(response_id, status))
+        # Listening again BEFORE response.done goes out: the Reachy app posts the tool
+        # output and response.create the moment it sees response.done, and must not be
+        # told the response is still active.
         self.state = "listening"
+        self._emit(events.response_done(response_id, status))
 
     def _speak(self, response_id: str, text: str) -> bool:
         """Synth one chunk and emit it. False = interrupted (stop the response)."""

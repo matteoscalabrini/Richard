@@ -1,5 +1,8 @@
+import json
 import threading
 import time
+
+import pytest
 
 from richard.realtime.session import RealtimeSession
 
@@ -44,7 +47,7 @@ class FakeEngine:
         self.deltas = deltas
         self.seen = []
 
-    def respond_streaming(self, conversation):
+    def respond_streaming(self, conversation, client_tools=None):
         self.seen.append([ (m.role, m.content) for m in conversation.history() ])
         yield from self.deltas
 
@@ -149,13 +152,17 @@ def test_partial_transcripts_emitted_during_speech():
     session.close()
 
 
-def test_text_item_runs_a_turn_without_stt():
+def test_text_item_appends_and_response_create_runs_the_turn():
     session, emitted, done = collect_session(detector=ScriptedDetector([]))
-    session.create_text_item("hello richard")
+    session.create_item({"kind": "message", "content": "hello richard"})
+    time.sleep(0.2)
+    assert not any(e["type"] == "response.created" for e in emitted)  # append only
+    session.create_response()
     wait(done)
     kinds = [e["type"] for e in emitted]
     assert "conversation.item.input_audio_transcription.completed" not in kinds
     assert "response.audio.delta" in kinds
+    assert [m.role for m in session.conversation.history()] == ["user", "assistant"]
     session.close()
 
 
@@ -254,7 +261,7 @@ def test_explicit_cancel_stops_response():
 
 
 class DownEngine:
-    def respond_streaming(self, conversation):
+    def respond_streaming(self, conversation, client_tools=None):
         from richard.errors import BrainUnreachable
         raise BrainUnreachable("boom")
         yield  # pragma: no cover — makes this a generator
@@ -321,7 +328,7 @@ def test_cancel_during_thinking_is_not_lost():
 
 
 class ExplodingEngine:
-    def respond_streaming(self, conversation):
+    def respond_streaming(self, conversation, client_tools=None):
         raise RuntimeError("kaboom")
         yield  # pragma: no cover — makes this a generator
 
@@ -365,4 +372,172 @@ def test_audio_worker_survives_stage_crash():
     session.feed_audio(FRAME)   # further frames: dropped, no second error
     time.sleep(0.1)
     assert len([e for e in emitted if e["type"] == "error"]) == 1
+    session.close()
+
+
+from richard.engine import ClientToolCall  # noqa: E402
+from richard.errors import BrainRejectedInput  # noqa: E402
+
+IMG = "data:image/jpeg;base64,/9j/4AAQ"
+CAMERA_SPEC = {"type": "function", "name": "camera", "description": "look",
+               "parameters": {"type": "object", "properties": {"question": {"type": "string"}}}}
+
+
+class CameraEngine:
+    """First turn: speaks then calls camera. Second turn: answers with the image in view."""
+
+    def __init__(self):
+        self.seen = []
+        self.client_tools = []
+        self.turns = 0
+
+    def tool_names(self):
+        return ["remember", "forget"]
+
+    def respond_streaming(self, conversation, client_tools=None):
+        self.client_tools.append(list(client_tools or []))
+        self.seen.append([m.to_chat() for m in conversation.history()])
+        self.turns += 1
+        if self.turns == 1:
+            yield "Let me look. "
+            conversation.add_tool_call("Let me look. ", [{"id": "c1", "type": "function", "function": {
+                "name": "camera", "arguments": '{"question": "what"}'}}])
+            yield ClientToolCall(id="c1", name="camera", arguments='{"question": "what"}')
+            return
+        yield "A blue mug."
+
+
+def test_session_update_stores_tools_and_reports_drops():
+    session, emitted, done = collect_session(engine=CameraEngine(), detector=ScriptedDetector([]))
+    out = session.update({"tools": [CAMERA_SPEC, {"type": "function", "name": "remember", "parameters": {}}],
+                          "type": "realtime", "instructions": "ignored"})
+    assert out["tools"] == ["camera"] and out["dropped_tools"] == ["remember"]
+    assert out["barge_in"] == "vad"
+    assert session.client_tools[0]["function"]["name"] == "camera"
+    session.close()
+
+
+def test_camera_round_trip_follows_the_app_sequence():
+    engine = CameraEngine()
+    session, emitted, done = collect_session(engine=engine, detector=ScriptedDetector([]))
+    session.update({"tools": [CAMERA_SPEC]})
+    session.create_item({"kind": "message", "content": "what am I holding?"})
+    session.create_response()
+    wait(done)
+    kinds = [e["type"] for e in emitted]
+    fc = kinds.index("response.function_call_arguments.done")
+    assert kinds.index("response.created") < kinds.index("response.output_text.delta") < fc < kinds.index("response.done")
+    call = emitted[fc]
+    assert call["call_id"] == "c1" and call["name"] == "camera" and call["arguments"] == '{"question": "what"}'
+    assert emitted[-1]["response"]["status"] == "completed"
+    assert engine.client_tools[0][0]["function"]["name"] == "camera"
+    # the turn that ended in a client call stores no assistant reply of its own
+    assert [m.role for m in session.conversation.history()] == ["user", "assistant"]
+    assert session.conversation.pending_client_calls() == ["c1"]
+
+    done.clear()
+    session.create_item({"kind": "function_call_output", "call_id": "c1", "output": '{"image_attached": true}'})
+    session.create_item({"kind": "message", "content": [{"type": "image_url", "image_url": {"url": IMG}}]})
+    session.create_response()
+    wait(done)
+    served = engine.seen[1]
+    assert [m["role"] for m in served] == ["user", "assistant", "tool", "user"]
+    assert served[2] == {"role": "tool", "tool_call_id": "c1", "content": '{"image_attached": true}'}
+    assert served[3]["content"] == [{"type": "image_url", "image_url": {"url": IMG}}]
+    assert [m.role for m in session.conversation.history()] == ["user", "assistant", "tool", "user", "assistant"]
+    assert session.conversation.history()[-1].content == "A blue mug."
+    session.close()
+
+
+def test_function_call_output_for_unknown_call_is_rejected():
+    session, emitted, done = collect_session(engine=CameraEngine(), detector=ScriptedDetector([]))
+    with pytest.raises(ValueError, match="call_id"):
+        session.create_item({"kind": "function_call_output", "call_id": "nope", "output": "{}"})
+    assert session.conversation.history() == []
+    session.close()
+
+
+def test_response_create_with_nothing_new_is_an_empty_response():
+    session, emitted, done = collect_session(detector=ScriptedDetector([]))
+    session.create_response()  # empty conversation
+    wait(done)
+    kinds = [e["type"] for e in emitted]
+    assert kinds[-2:] == ["response.created", "response.done"]
+    assert "response.audio.delta" not in kinds
+    session.close()
+
+
+def test_response_create_while_active_is_an_error():
+    tts = GatedTTS()
+    session, emitted, done = collect_session(tts=tts, detector=ScriptedDetector([]))
+    session.create_item({"kind": "message", "content": "hi"})
+    session.create_response()
+    assert tts.entered.wait(5)
+    session.create_response()  # second one while speaking
+    errors = [e for e in emitted if e["type"] == "error"]
+    assert errors and errors[0]["error"]["code"] == "conversation_already_has_active_response"
+    tts.release.set()
+    wait(done)
+    session.close()
+
+
+def test_speech_over_a_pending_call_seals_it_first():
+    engine = CameraEngine()
+    session, emitted, done = collect_session(
+        engine=engine, detector=ScriptedDetector([[("speech_started",)], [("utterance", b"pcm")]]))
+    session.update({"tools": [CAMERA_SPEC]})
+    session.create_item({"kind": "message", "content": "look"})
+    session.create_response()
+    wait(done)
+    done.clear()
+    session.feed_audio(FRAME)  # user talks instead of the client answering the call
+    session.feed_audio(FRAME)
+    wait(done)
+    served = engine.seen[1]
+    assert [m["role"] for m in served] == ["user", "assistant", "tool", "user"]
+    assert json.loads(served[2]["content"]) == {"error": "no result from client"}
+    session.close()
+
+
+def test_response_create_seals_dangling_calls_before_running():
+    engine = CameraEngine()
+    session, emitted, done = collect_session(engine=engine, detector=ScriptedDetector([]))
+    session.update({"tools": [CAMERA_SPEC]})
+    session.create_item({"kind": "message", "content": "look"})
+    session.create_response()
+    wait(done)
+    done.clear()
+    session.create_response()  # client never posted the output
+    wait(done)
+    served = engine.seen[1]
+    assert [m["role"] for m in served] == ["user", "assistant", "tool"]
+    assert json.loads(served[2]["content"]) == {"error": "no result from client"}
+    session.close()
+
+
+class RejectingEngine:
+    def respond_streaming(self, conversation, client_tools=None):
+        raise BrainRejectedInput("brain rejected the request (400): no vision")
+        yield  # pragma: no cover
+
+
+def test_rejected_image_speaks_its_own_line():
+    tts = FakeTTS()
+    session, emitted, done = collect_session(engine=RejectingEngine(), tts=tts, detector=ScriptedDetector([]))
+    session.create_item({"kind": "message", "content": [{"type": "image_url", "image_url": {"url": IMG}}]})
+    session.create_response()
+    wait(done)
+    assert tts.spoken == ["I couldn't take that picture in."]
+    assert emitted[-1]["response"]["status"] == "failed"
+    codes = [e["error"]["code"] for e in emitted if e["type"] == "error"]
+    assert codes == ["brain_rejected_input"]
+    session.close()
+
+
+def test_image_item_logs_telemetry(caplog):
+    import logging
+    session, emitted, done = collect_session(detector=ScriptedDetector([]))
+    with caplog.at_level(logging.INFO, logger="richard.vision"):
+        session.create_item({"kind": "message", "content": [{"type": "image_url", "image_url": {"url": IMG}}]})
+    assert "vision: image source=client mime=image/jpeg" in caplog.text
     session.close()
