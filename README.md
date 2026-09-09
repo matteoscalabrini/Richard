@@ -90,6 +90,8 @@ ask *"why didn't the kitchen light turn on?"*
 - **A portable CLI** — the lean core (three dependencies, no web framework) runs on any
   Unix box; everything heavy lives behind the optional `voice` extra.
 
+**Plugins.** Connections (Home Assistant today, the Reachy body next) are plugins discovered through Python entry points: `richard plugins list|enable|disable|config|install`. A disabled plugin contributes no tools and no prompt text. See `docs/plugins.md`.
+
 ## Install & run
 
 ```bash
@@ -200,7 +202,9 @@ after every call. The Home Assistant user behind the token determines the integr
 effective permissions, so a dedicated account is recommended.
 
 For headless deployments use `RICHARD_HA_HOST`, `RICHARD_HA_PORT`, `RICHARD_HA_TOKEN`, and
-`RICHARD_HA_ENABLED=on`; environment variables override the TOML file.
+`RICHARD_HA_ENABLED=on`; environment variables override the TOML file. Home Assistant is a
+plugin: the settings live in `[plugins.home_assistant]`, and `richard plugins config
+home_assistant host=... token=...` writes the same table (see `docs/plugins.md`).
 
 ## Development
 

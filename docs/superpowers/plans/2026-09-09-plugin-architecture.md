@@ -17,7 +17,7 @@
 - `[plugins.<name>]` tables are preserved by `save_config` even when Richard does not model them.
 - A plugin that raises in `build` is logged with its traceback and skipped; Richard never fails to start because of a plugin.
 - Voice engines, brains and memory are not plugins.
-- The private device integration is a separate private package; nothing in this repo references it. Before any push to the `public` remote, run the repo's private-string check (the pattern is in the private memory `matteo-working-style`, never in this tree) and it must print nothing.
+- The private device integration is a separate private package; nothing in this repo references it. Before any push to the `public` remote, run the repo's private-string check (the exact command is in the private memory `richard-public-push-check`, never in this tree) and it must print nothing.
 - Every change is TDD: failing test first, minimal code, suite green, commit. Suite command: `.venv/bin/python -m pytest -q` from the worktree root `/Users/matteo/Documents/GitHub/Richard/.worktrees/reachy-presence`, branch `reachy-presence`. Baseline: 518 passed, 2 skipped at `da851a5`.
 - Commit messages: imperative subject, a body that says why, and the trailer `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`.
 
