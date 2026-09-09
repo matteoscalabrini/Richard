@@ -2,8 +2,10 @@
 
 One RealtimeSession per connection. Inbound: JSON client events (audio arrives
 base64-encoded inside input_audio_buffer.append — no binary frames, matching the
-Realtime API). Outbound: the session emits dicts from worker threads; emit()
-marshals them onto the event loop where a single sender task owns ws.send.
+Realtime API; conversation.item.create appends a message or a function_call_output,
+response.create runs the turn). Outbound: the session emits dicts from worker
+threads; emit() marshals them onto the event loop where a single sender task owns
+ws.send.
 """
 from __future__ import annotations
 
@@ -22,20 +24,6 @@ def _authorized(ws, token: str) -> bool:
     headers = getattr(request, "headers", None) or {}
     bearer = headers.get("Authorization", "")
     return secrets.compare_digest(query_token, token) or secrets.compare_digest(bearer, f"Bearer {token}")
-
-
-def _text_content(event: dict) -> str:
-    """Extract the text of a conversation.item.create (subset: input_text parts only)."""
-    item = event.get("item")
-    if not isinstance(item, dict):
-        return ""
-    parts = item.get("content")
-    if not isinstance(parts, list):
-        return ""
-    return " ".join(
-        p["text"] for p in parts
-        if isinstance(p, dict) and p.get("type") == "input_text" and isinstance(p.get("text"), str)
-    ).strip()
 
 
 async def handle_realtime(ws, session_factory, *, token: str = "") -> None:
@@ -85,12 +73,16 @@ async def handle_realtime(ws, session_factory, *, token: str = "") -> None:
                         continue
                     emit(events.session_updated(session.update(patch)))
                 elif etype == "conversation.item.create":
-                    if not isinstance(event.get("item"), dict):
+                    item = event.get("item")
+                    if not isinstance(item, dict):
                         emit(events.error("conversation.item.create: 'item' must be an object"))
                         continue
-                    text = _text_content(event)
-                    if text:
-                        session.create_text_item(text)
+                    try:
+                        session.create_item(events.parse_item(item))
+                    except ValueError as exc:
+                        emit(events.error(str(exc)))
+                elif etype == "response.create":
+                    session.create_response()
             except Exception:
                 # A malformed-but-parseable event must never kill the connection.
                 emit(events.error(f"internal error handling {etype}", code="internal_error"))

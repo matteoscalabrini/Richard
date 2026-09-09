@@ -38,7 +38,8 @@ class FakeSession:
     def __init__(self, emit):
         self.emit = emit
         self.audio = b""
-        self.texts = []
+        self.items = []
+        self.responses = 0
         self.cancelled = False
         self.closed = False
         self.samplerate = 24000
@@ -46,8 +47,13 @@ class FakeSession:
     def feed_audio(self, pcm):
         self.audio += pcm
 
-    def create_text_item(self, text):
-        self.texts.append(text)
+    def create_item(self, item):
+        if item.get("kind") == "function_call_output" and item["call_id"] == "unknown":
+            raise ValueError("function_call_output: unknown or already answered call_id unknown")
+        self.items.append(item)
+
+    def create_response(self):
+        self.responses += 1
 
     def cancel_response(self):
         self.cancelled = True
@@ -92,7 +98,7 @@ def test_audio_and_text_and_cancel_are_dispatched():
     ])
     (session,) = run(ws)
     assert session.audio == b"\xaa\xbb"
-    assert session.texts == ["hi"]
+    assert session.items == [{"kind": "message", "content": "hi"}]
     assert session.cancelled is True
     assert session.closed is True  # socket end closes the session
 
@@ -143,7 +149,7 @@ def test_non_dict_item_create_gets_error_and_survives():
     ])
     (session,) = run(ws)
     assert any(m["type"] == "error" for m in ws.sent)
-    assert session.texts == []
+    assert session.items == []
     assert session.audio == b"\x02"
 
 
@@ -154,3 +160,45 @@ def test_wrong_token_rejected_via_query_and_bearer():
     bad_header = FakeWs([], headers={"Authorization": "Bearer nope"})
     assert run(bad_header, token="sekrit") == []
     assert bad_header.closed[0] == 4001
+
+
+IMG = "data:image/jpeg;base64,/9j/4AAQ"
+
+
+def test_response_create_and_function_call_output_are_dispatched():
+    ws = FakeWs([
+        json.dumps({"type": "conversation.item.create", "item": {
+            "type": "function_call_output", "call_id": "c1", "output": '{"image_attached": true}'}}),
+        json.dumps({"type": "conversation.item.create", "item": {
+            "type": "message", "role": "user", "content": [{"type": "input_image", "image_url": IMG}]}}),
+        json.dumps({"type": "response.create"}),
+    ])
+    (session,) = run(ws)
+    assert session.items[0] == {"kind": "function_call_output", "call_id": "c1", "output": '{"image_attached": true}'}
+    assert session.items[1] == {"kind": "message", "content": [{"type": "image_url", "image_url": {"url": IMG}}]}
+    assert session.responses == 1
+    assert not any(m["type"] == "error" for m in ws.sent)
+
+
+def test_bad_items_get_invalid_request_and_the_connection_survives():
+    ws = FakeWs([
+        json.dumps({"type": "conversation.item.create", "item": {
+            "type": "message", "content": [{"type": "input_image", "image_url": "http://x/y.jpg"}]}}),
+        json.dumps({"type": "conversation.item.create", "item": {
+            "type": "function_call_output", "call_id": "unknown", "output": "{}"}}),
+        _append(b"\x03"),
+    ])
+    (session,) = run(ws)
+    errors = [m for m in ws.sent if m["type"] == "error"]
+    assert [e["error"]["code"] for e in errors] == ["invalid_request", "invalid_request"]
+    assert "data:image" in errors[0]["error"]["message"]
+    assert session.items == []
+    assert session.audio == b"\x03"
+
+
+def test_session_update_with_tools_is_passed_through():
+    ws = FakeWs([json.dumps({"type": "session.update", "session": {
+        "type": "realtime", "tools": [{"type": "function", "name": "camera", "parameters": {}}]}})])
+    (session,) = run(ws)
+    updated = [m for m in ws.sent if m["type"] == "session.updated"]
+    assert updated  # the fake echoes barge_in; the real session's tool handling is tested in test_realtime_session
