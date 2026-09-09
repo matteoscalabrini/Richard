@@ -1,7 +1,9 @@
 """Event vocabulary for the /v1/realtime WebSocket (OpenAI Realtime API subset).
 
-Pure data, no I/O: builders return dicts (server.py serializes), and
-parse_client_event validates inbound JSON, decoding audio payloads to bytes.
+Pure data, no I/O: builders return dicts (server.py serializes), parse_client_event
+validates inbound JSON (decoding audio payloads to bytes), parse_item normalizes
+conversation items (user messages with text and image parts, function_call_output),
+and tools_to_schemas turns the client's flat tool specs into chat-completions schemas.
 Deviation from OpenAI, documented in docs/realtime-api.md: our
 transcription.delta carries the full partial transcript (replace semantics),
 not an append fragment.
@@ -13,12 +15,18 @@ import binascii
 import json
 import uuid
 
+from richard.conversation import user_parts
+from richard.vision import check_image_data_url
+
 CLIENT_EVENT_TYPES = {
     "session.update",
     "input_audio_buffer.append",
     "response.cancel",
+    "response.create",
     "conversation.item.create",
 }
+
+ACTIVE_RESPONSE_CODE = "conversation_already_has_active_response"
 
 
 def new_id(prefix: str) -> str:
@@ -90,6 +98,83 @@ def item_truncated(item_id: str) -> dict:
 
 def error(message: str, code: str = "invalid_request") -> dict:
     return {"type": "error", "error": {"code": code, "message": message}}
+
+
+def function_call_arguments_done(response_id: str, call_id: str, name: str, arguments: str) -> dict:
+    """The brain called a client-owned tool; the client runs it and posts the result."""
+    return {
+        "type": "response.function_call_arguments.done",
+        "event_id": new_id("event"),
+        "response_id": response_id,
+        "item_id": new_id("item"),
+        "output_index": 0,
+        "call_id": call_id,
+        "name": name,
+        "arguments": arguments,
+    }
+
+
+def tools_to_schemas(tools, reserved=()) -> tuple[list[dict], list[str]]:
+    """Realtime flat function specs → chat-completions schemas. Names in `reserved`
+    (Richard's own providers) are dropped and reported; junk entries are skipped."""
+    schemas: list[dict] = []
+    dropped: list[str] = []
+    for tool in tools or []:
+        if not isinstance(tool, dict) or tool.get("type", "function") != "function":
+            continue
+        name = tool.get("name")
+        if not isinstance(name, str) or not name:
+            continue
+        if name in reserved:
+            dropped.append(name)
+            continue
+        parameters = tool.get("parameters")
+        if not isinstance(parameters, dict) or not parameters:
+            parameters = {"type": "object", "properties": {}}
+        schemas.append({"type": "function", "function": {
+            "name": name,
+            "description": str(tool.get("description") or ""),
+            "parameters": parameters,
+        }})
+    return schemas, dropped
+
+
+def parse_item(item: dict) -> dict:
+    """Normalize a conversation.item.create item. Raises ValueError with a client-facing message.
+
+    `message` (default): user role only; `input_text` and `input_image` parts; a text-only
+    item becomes a string, anything with an image becomes content parts.
+    `function_call_output`: `call_id` and a string `output`.
+    """
+    itype = item.get("type", "message")
+    if itype == "message":
+        if item.get("role", "user") != "user":
+            raise ValueError("conversation.item.create: only user-role messages are accepted")
+        parts = item.get("content")
+        if not isinstance(parts, list):
+            raise ValueError("conversation.item.create: 'content' must be a list of parts")
+        texts: list[str] = []
+        images: list[str] = []
+        for part in parts:
+            if not isinstance(part, dict):
+                continue
+            if part.get("type") == "input_text" and isinstance(part.get("text"), str):
+                texts.append(part["text"].strip())
+            elif part.get("type") == "input_image":
+                check_image_data_url(part.get("image_url"))
+                images.append(part["image_url"])
+        text = " ".join(t for t in texts if t).strip()
+        if not text and not images:
+            raise ValueError("conversation.item.create: no usable content")
+        return {"kind": "message", "content": text if not images else user_parts(text or None, images)}
+    if itype == "function_call_output":
+        call_id, output = item.get("call_id"), item.get("output")
+        if not isinstance(call_id, str) or not call_id:
+            raise ValueError("function_call_output: 'call_id' must be a non-empty string")
+        if not isinstance(output, str):
+            raise ValueError("function_call_output: 'output' must be a string")
+        return {"kind": "function_call_output", "call_id": call_id, "output": output}
+    raise ValueError(f"conversation.item.create: unsupported item type: {itype}")
 
 
 def parse_client_event(raw: str | bytes) -> dict:
