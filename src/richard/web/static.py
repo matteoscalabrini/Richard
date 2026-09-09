@@ -1523,6 +1523,37 @@ registerProcessor('pcm16-capture', Pcm16Capture);
 let rt = null;  // {ws, ctx, stream, node, playhead, sources, outRate, userLine, replyLine}
 let rtStarting = false;
 
+// The same tool the Reachy Conversation App offers on the robot, so this page exercises
+// the robot's protocol path end to end: the brain decides to look, we take the frame.
+const CAMERA_TOOL = {
+  type: 'function', name: 'camera',
+  description: 'Take a picture with the webcam to see what is in front of the computer: what the user is holding, how they look, the room. Use it when the user asks you to look at something, what you can see, or wants your visual opinion; if they ask you to look without saying at what, take the picture and describe what you see. Each call captures the current moment. Start with detail low; ask for high only to read text or see small objects.',
+  parameters: {type: 'object', properties: {
+    question: {type: 'string', description: 'What to observe or ask about in the picture.'},
+    detail: {type: 'string', enum: ['low', 'high'], description: 'low (default) or high for small text and details.'}
+  }, required: ['question']}
+};
+function rtSend(o){ if (rt && rt.ws.readyState === 1) rt.ws.send(JSON.stringify(o)); }
+function rtAnswerCall(call){
+  if (call.error){
+    rtSend({type: 'conversation.item.create', item: {type: 'function_call_output', call_id: call.id, output: JSON.stringify({error: call.error})}});
+    rtSend({type: 'response.create'}); return;
+  }
+  let detail = 'low';
+  try { detail = JSON.parse(call.args || '{}').detail === 'high' ? 'high' : 'low'; } catch (_) {}
+  const v = rt.video;
+  const shot = v ? frameFromCanvasSource(v, v.videoWidth, v.videoHeight, detail === 'high' ? 1600 : 800) : null;
+  if (!shot){
+    rtSend({type: 'conversation.item.create', item: {type: 'function_call_output', call_id: call.id, output: JSON.stringify({error: 'No frame available'})}});
+    rtSend({type: 'response.create'}); return;
+  }
+  chatHistory.push({role: 'user', content: [{type: 'image_url', image_url: {url: shot.url}}]}); renderChatHistory();
+  rtSend({type: 'conversation.item.create', item: {type: 'function_call_output', call_id: call.id,
+    output: JSON.stringify({image_attached: true, image_width: shot.width, image_height: shot.height})}});
+  rtSend({type: 'conversation.item.create', item: {type: 'message', role: 'user', content: [{type: 'input_image', image_url: shot.url}]}});
+  rtSend({type: 'response.create'});
+}
+
 function rtB64FromBuffer(buf){
   const bytes = new Uint8Array(buf); let bin = '';
   for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
@@ -1553,7 +1584,16 @@ function rtFlushPlayback(){
 
 function rtHandle(msg){
   switch (msg.type){
-    case 'session.created': rt.outRate = msg.session.output_audio_samplerate; break;
+    case 'session.created':
+      rt.outRate = msg.session.output_audio_samplerate;
+      if (rt.video) rtSend({type: 'session.update', session: {tools: [CAMERA_TOOL]}});
+      break;
+    case 'response.function_call_arguments.done':
+      rt.pendingCall = (msg.name === 'camera' && rt.video)
+        ? {id: msg.call_id, args: msg.arguments}
+        : {id: msg.call_id, error: 'unknown tool ' + msg.name};
+      setEntityState('thinking'); setStatus('chat', 'looking…', '');
+      break;
     case 'input_audio_buffer.speech_started':
       // Barge-in: synthesis outruns playback, so the server can already be done
       // ("listening") while seconds of audio are still queued here — truncated
@@ -1573,6 +1613,7 @@ function rtHandle(msg){
     case 'conversation.item.truncated': rtFlushPlayback(); break;
     case 'response.done':
       if (rt.replyLine){ chatHistory.push({role: 'assistant', content: rt.replyLine}); renderChatHistory(); setLatestReply(rt.replyLine); }
+      if (rt.pendingCall){ const call = rt.pendingCall; rt.pendingCall = null; rtAnswerCall(call); break; }
       setEntityState('ready'); setStatus('chat', '', '');
       break;
     case 'error': setStatus('chat', 'voice: ' + msg.error.message, 'err'); break;
@@ -1601,9 +1642,12 @@ async function startVoiceMode(){
       ws.onmessage = e => preMsgs.push(e.data);
       ws.onerror = () => { wsFailedEarly = true; setStatus('chat', 'voice connection failed', 'err'); };
       ws.onclose = () => { wsFailedEarly = true; setStatus('chat', 'voice connection closed — check realtime server/token', 'err'); };
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: {echoCancellation: true, noiseSuppression: true, channelCount: 1}
-      });
+      const audioSpec = {echoCancellation: true, noiseSuppression: true, channelCount: 1};
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({audio: audioSpec, video: {width: {ideal: 1920}, height: {ideal: 1080}, facingMode: 'user'}});
+      } catch (_) {
+        stream = await navigator.mediaDevices.getUserMedia({audio: audioSpec});  // no camera: voice only
+      }
       ctx = new AudioContext();
       await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([RT_WORKLET], {type: 'text/javascript'})));
     } catch (e) {
@@ -1623,13 +1667,22 @@ async function startVoiceMode(){
     };
     ctx.createMediaStreamSource(stream).connect(node);
     rt = {ws, ctx, stream, node, playhead: 0, sources: [], outRate: 24000, userLine: '', replyLine: ''};
+    rt.pendingCall = null; rt.video = null;
+    if (stream.getVideoTracks().length){
+      const v = document.createElement('video');
+      v.muted = true; v.playsInline = true; v.autoplay = true; v.hidden = true;
+      v.srcObject = new MediaStream(stream.getVideoTracks());
+      document.body.appendChild(v);
+      try { await v.play(); } catch (_) {}
+      rt.video = v;
+    }
     ws.onclose = () => stopVoiceMode();
     ws.onerror = () => setStatus('chat', 'voice connection failed', 'err');
     ws.onmessage = e => { try { rtHandle(JSON.parse(e.data)); } catch (_) {} };
     preMsgs.forEach(d => { try { rtHandle(JSON.parse(d)); } catch (_) {} });
     preMsgs = null;
     $('voice-mode').classList.add('recording');
-    setEntityState('ready'); setStatus('chat', 'hands-free — just talk', '');
+    setEntityState('ready'); setStatus('chat', rt.video ? 'hands-free — just talk; Richard can look through the webcam' : 'hands-free — just talk', '');
   } finally {
     rtStarting = false; $('voice-mode').disabled = false;
   }
@@ -1640,6 +1693,7 @@ function stopVoiceMode(){
   const r = rt; rt = null;
   try { r.ws.onclose = null; r.ws.close(); } catch (_) {}
   r.stream.getTracks().forEach(t => t.stop());
+  if (r.video) r.video.remove();
   r.ctx.close().catch(() => {});
   $('voice-mode').classList.remove('recording');
   setEntityState('ready'); setStatus('chat', '', '');

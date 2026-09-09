@@ -1356,3 +1356,13 @@ def test_home_page_has_the_attach_control_and_thumbnail_rendering(tmp_path):
     assert "function shrinkImage(" in html
     assert "function contentThumbs(" in html
     assert "chat-thumb" in html
+
+
+def test_voice_mode_registers_the_camera_tool_and_answers_calls(tmp_path):
+    html = _app(tmp_path).handle("GET", "/").body.decode()
+    assert "const CAMERA_TOOL" in html and "name: 'camera'" in html
+    assert "'response.function_call_arguments.done'" in html
+    assert "function rtAnswerCall(" in html
+    assert "type: 'function_call_output'" in html and "type: 'input_image'" in html
+    assert "type: 'response.create'" in html
+    assert "enum: ['low', 'high']" in html
