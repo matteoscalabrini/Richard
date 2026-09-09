@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Iterator
+from dataclasses import dataclass
 
 from richard.brain.completion import Completion
 from richard.brain.protocol import Brain
@@ -42,6 +43,18 @@ def _promises_action(text: str) -> bool:
 
 def _is_nothing_to_run(text: str) -> bool:
     return (text or "").strip().rstrip(".").strip().upper() == NOTHING_TO_RUN
+
+
+@dataclass(frozen=True)
+class ClientToolCall:
+    """A tool call the engine cannot execute: it belongs to the connected client (the
+    Reachy app's `camera`, the browser's webcam). The engine records the call in the
+    conversation and ends the turn; the client posts the result as a tool message (and,
+    for a camera, the image as a user message) and asks for a new response."""
+
+    id: str
+    name: str
+    arguments: str  # JSON, as served to the client
 
 
 def _assistant_tool_call_message(completion) -> dict:
@@ -86,6 +99,14 @@ class Engine:
             conversation.pinned_head = self._system_prompt()
         return conversation.pinned_head
 
+    def tool_names(self) -> list[str]:
+        """Names of the tools Richard's providers own (client tools with these names are dropped)."""
+        return [s["function"]["name"] for provider in self._providers for s in provider.schemas()]
+
+    def _client_schemas(self, client_tools: list[dict] | None) -> list[dict]:
+        owned = set(self.tool_names())
+        return [t for t in (client_tools or []) if t["function"]["name"] not in owned]
+
     def _execute(self, name: str, arguments: dict) -> str:
         for provider in self._providers:
             if any(s["function"]["name"] == name for s in provider.schemas()):
@@ -98,7 +119,8 @@ class Engine:
         return f"Unknown tool: {name}."
 
     def _record_tool_round(
-        self, conversation: Conversation, working: list[dict], completion: Completion
+        self, conversation: Conversation, working: list[dict], completion: Completion,
+        deferred: frozenset[str] = frozenset(),
     ) -> None:
         """Execute the calls and append the round to both the request and the history.
 
@@ -106,12 +128,15 @@ class Engine:
         exact served prefix or the prompt cache misses and the whole prompt is
         re-prefilled (measured 2026-09-09: ~2 s per turn after every tool call). The
         nudge round is deliberately not persisted; it is rare and a fake user message
-        in history would mislead later turns.
+        in history would mislead later turns. Calls in `deferred` belong to the client:
+        their result arrives later as a tool message posted by the client.
         """
         tool_message = _assistant_tool_call_message(completion)
         working.append(tool_message)
         conversation.add_tool_call(tool_message["content"], tool_message["tool_calls"])
         for call in completion.tool_calls:
+            if call.id in deferred:
+                continue
             result = self._execute(call.name, call.arguments)
             working.append({"role": "tool", "tool_call_id": call.id, "content": result})
             conversation.add_tool_result(call.id, result)
@@ -150,10 +175,14 @@ class Engine:
             self._record_tool_round(conversation, working, completion)
         return last_content or "Sorry, I got a bit tangled up."
 
-    def respond_streaming(self, conversation: Conversation) -> Iterator[str]:
+    def respond_streaming(
+        self, conversation: Conversation, client_tools: list[dict] | None = None
+    ) -> Iterator[str | ClientToolCall]:
         working: list[dict] = [{"role": "system", "content": self._head(conversation)}]
         working += [m.to_chat() for m in conversation.history()]
-        schemas = [s for provider in self._providers for s in provider.schemas()]
+        client_schemas = self._client_schemas(client_tools)
+        client_names = {s["function"]["name"] for s in client_schemas}
+        schemas = [s for provider in self._providers for s in provider.schemas()] + client_schemas
         any_tool_call = False
         nudged = False
         hold = False  # buffer the nudge round so a sentinel reply is never spoken
@@ -191,8 +220,16 @@ class Engine:
                     continue
                 return
             any_tool_call = True
+            client_calls = [c for c in tool_calls if c.name in client_names]
             self._record_tool_round(
-                conversation, working, Completion(content=spoken or None, tool_calls=tool_calls)
+                conversation, working, Completion(content=spoken or None, tool_calls=tool_calls),
+                deferred=frozenset(c.id for c in client_calls),
             )
+            if client_calls:
+                # The turn ends here: the client owns the next step. The next
+                # response.create runs a fresh turn on the appended history.
+                for call in client_calls:
+                    yield ClientToolCall(id=call.id, name=call.name, arguments=json.dumps(call.arguments))
+                return
         # max_rounds exhausted: the generator just stops; the caller (voice loop) is
         # responsible for any fallback. (respond() returns an error string here instead.)

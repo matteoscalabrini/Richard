@@ -11,9 +11,11 @@ class FakeBrain:
     def __init__(self, scripts):
         self.scripts = list(scripts)
         self.calls = []
+        self.tools = []
 
     def stream(self, messages, tools=None):
         self.calls.append(list(messages))
+        self.tools.append(list(tools or []))
         script = self.scripts.pop(0)
         for delta in script.get("deltas", []):
             yield StreamEvent(delta=delta)
@@ -184,3 +186,100 @@ def test_streaming_tool_round_is_persisted_for_the_next_turn():
         {"role": "assistant", "content": "Fan's on."},
         {"role": "user", "content": "thanks"},
     ]
+
+
+import json  # noqa: E402
+
+from richard.engine import ClientToolCall  # noqa: E402
+
+CAMERA = {"type": "function", "function": {"name": "camera", "parameters": {
+    "type": "object", "properties": {"question": {"type": "string"}}, "required": ["question"]}}}
+
+
+def test_client_tool_call_ends_the_turn_and_is_yielded():
+    brain = FakeBrain([
+        {"deltas": ["Let me look. "], "tool_calls": [ToolCall(id="c1", name="camera", arguments={"question": "what"})]},
+    ])
+    provider = FakeProvider()
+    engine = Engine(brain, [provider], Personality())
+    convo = Conversation()
+    convo.add_user("what am I holding?")
+    out = list(engine.respond_streaming(convo, client_tools=[CAMERA]))
+    assert out[0] == "Let me look. "
+    assert out[1] == ClientToolCall(id="c1", name="camera", arguments=json.dumps({"question": "what"}))
+    assert len(out) == 2
+    assert provider.executed == []
+    # the brain saw both schemas: the provider's and the client's
+    assert [t["function"]["name"] for t in brain.tools[0]] == ["set_fan", "camera"]
+    # history: user, assistant tool call with the spoken text; nothing else (no tool result yet)
+    hist = [m.to_chat() for m in convo.history()]
+    assert hist[1]["role"] == "assistant" and hist[1]["content"] == "Let me look. "
+    assert hist[1]["tool_calls"][0]["id"] == "c1"
+    assert len(hist) == 2
+    assert convo.pending_client_calls() == ["c1"]
+
+
+def test_next_turn_runs_on_the_appended_history():
+    brain = FakeBrain([
+        {"tool_calls": [ToolCall(id="c1", name="camera", arguments={"question": "what"})]},
+        {"deltas": ["A blue mug."]},
+    ])
+    engine = Engine(brain, [FakeProvider()], Personality())
+    convo = Conversation()
+    convo.add_user("look")
+    list(engine.respond_streaming(convo, client_tools=[CAMERA]))
+    convo.add_tool_result("c1", '{"image_attached": true}')
+    convo.add_user([{"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,AAAA"}}])
+    assert "".join(engine.respond_streaming(convo, client_tools=[CAMERA])) == "A blue mug."
+    served = brain.calls[1]
+    assert [m["role"] for m in served] == ["system", "user", "assistant", "tool", "user"]
+    assert served[3]["tool_call_id"] == "c1"
+    assert served[4]["content"][0]["type"] == "image_url"
+
+
+def test_mixed_round_executes_provider_calls_and_defers_client_calls():
+    brain = FakeBrain([
+        {"tool_calls": [ToolCall(id="a", name="set_fan", arguments={"on": True}),
+                        ToolCall(id="b", name="camera", arguments={"question": "q"})]},
+    ])
+    provider = FakeProvider()
+    engine = Engine(brain, [provider], Personality())
+    convo = Conversation()
+    convo.add_user("fan on and look")
+    out = list(engine.respond_streaming(convo, client_tools=[CAMERA]))
+    assert provider.executed == [("set_fan", {"on": True})]
+    assert out == [ClientToolCall(id="b", name="camera", arguments=json.dumps({"question": "q"}))]
+    assert convo.pending_client_calls() == ["b"]
+    roles = [m.role for m in convo.history()]
+    assert roles == ["user", "assistant", "tool"]  # set_fan's result recorded, camera's pending
+
+
+def test_client_tool_colliding_with_a_provider_is_dropped():
+    brain = FakeBrain([{"deltas": ["ok"]}])
+    engine = Engine(brain, [FakeProvider()], Personality())
+    convo = Conversation()
+    convo.add_user("hi")
+    clash = {"type": "function", "function": {"name": "set_fan", "parameters": {}}}
+    list(engine.respond_streaming(convo, client_tools=[clash, CAMERA]))
+    assert [t["function"]["name"] for t in brain.tools[0]] == ["set_fan", "camera"]
+    assert engine.tool_names() == ["set_fan"]
+
+
+def test_client_call_counts_as_an_action_so_no_nudge_follows():
+    brain = FakeBrain([
+        {"deltas": ["I'll take a look."], "tool_calls": [ToolCall(id="c1", name="camera", arguments={"question": "q"})]},
+    ])
+    engine = Engine(brain, [FakeProvider()], Personality())
+    convo = Conversation()
+    convo.add_user("look")
+    out = list(engine.respond_streaming(convo, client_tools=[CAMERA]))
+    assert isinstance(out[-1], ClientToolCall)
+    assert len(brain.calls) == 1  # no ACTION CHECK round
+
+
+def test_without_client_tools_only_strings_are_yielded():
+    brain = FakeBrain([{"deltas": ["plain"]}])
+    engine = Engine(brain, [FakeProvider()], Personality())
+    convo = Conversation()
+    convo.add_user("hi")
+    assert all(isinstance(x, str) for x in engine.respond_streaming(convo))
