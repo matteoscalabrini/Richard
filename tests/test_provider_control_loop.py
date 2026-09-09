@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 
 from richard.control_loops import ControlLoopStore, ControlTargetReader
 from richard.plugins.home_assistant.client import HomeAssistantEntity
+from richard.plugins.home_assistant.reader import HomeAssistantTargetReader
 from richard.providers.control_loop import ControlLoopProvider
 
 
@@ -22,7 +23,7 @@ def _provider():
         [HomeAssistantEntity("light.desk", "off", {"friendly_name": "Desk Lamp"})]
     )
     store = ControlLoopStore(":memory:")
-    reader = ControlTargetReader(home_assistant=ha)
+    reader = ControlTargetReader(readers={"ha": HomeAssistantTargetReader(ha)})
     return ControlLoopProvider(store, reader), store
 
 
@@ -31,7 +32,7 @@ def _scheduled_provider(now):
         [HomeAssistantEntity("light.lamp", "off", {"friendly_name": "Lamp"})]
     )
     store = ControlLoopStore(":memory:", now=now)
-    reader = ControlTargetReader(home_assistant=ha)
+    reader = ControlTargetReader(readers={"ha": HomeAssistantTargetReader(ha)})
     return ControlLoopProvider(store, reader, now=now), store
 
 

@@ -8,6 +8,7 @@ from richard.config import Config, load_config, save_config
 from richard.control_loops import ControlLoopStore, ControlTargetReader
 from richard.errors import HomeAssistantError
 from richard.plugins.home_assistant.client import HomeAssistantEntity
+from richard.plugins.home_assistant.reader import HomeAssistantTargetReader
 from richard.memory import MemoryStore
 from richard.satellite.relays import RelayRegistry
 from richard.web import WebApp
@@ -46,7 +47,7 @@ def _app(
         memory_store=memory or MemoryStore(":memory:"),
         control_loop_store=control_loops,
         control_target_reader=ControlTargetReader(
-            home_assistant=FakeTargetHomeAssistant(entities)
+            readers={"ha": HomeAssistantTargetReader(FakeTargetHomeAssistant(entities))}
         ),
         relays=relays or RelayRegistry(),
         **kwargs,

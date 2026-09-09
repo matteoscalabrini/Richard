@@ -444,9 +444,12 @@ def _build_control_loops(home_assistant=None):
     )
     from richard.providers.control_loop import ControlLoopProvider
 
+    from richard.plugins.home_assistant.reader import HomeAssistantTargetReader
+
     client = home_assistant.client if home_assistant is not None else None
     store = ControlLoopStore(default_control_loops_path())
-    reader = ControlTargetReader(home_assistant=client)
+    readers = {"ha": HomeAssistantTargetReader(client)} if client is not None else {}
+    reader = ControlTargetReader(readers=readers)
     return store, reader, ControlLoopProvider(store, reader)
 
 

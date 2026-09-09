@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import threading
 import time
@@ -9,17 +10,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from richard.plugins.home_assistant.client import HomeAssistantClient, HomeAssistantEntity
+from richard.plugins.base import TargetReader
 from richard.schedules import describe_schedule, next_run, parse_schedule
 
 
-_IGNORED_ATTRIBUTES = {
-    "attribution",
-    "entity_picture",
-    "icon",
-    "supported_features",
-}
 _MAX_NOTIFICATIONS = 200
+SCHEMA_VERSION = 2  # 2: every target carries a kind prefix ("ha:light.one"); kindless rows are dropped
+log = logging.getLogger(__name__)
 
 
 def _utc_now() -> str:
@@ -163,6 +160,20 @@ class ControlLoopStore:
             ):
                 if column not in existing:
                     self._conn.execute(ddl)
+            version = self._conn.execute("PRAGMA user_version").fetchone()[0]
+            if version < 2:
+                removed = 0
+                for row_id, targets_json in self._conn.execute("SELECT id, targets FROM control_loops").fetchall():
+                    try:
+                        targets = json.loads(targets_json)
+                    except (TypeError, ValueError):
+                        targets = []
+                    if any(":" not in str(target) for target in targets):
+                        self._conn.execute("DELETE FROM control_loops WHERE id = ?", (row_id,))
+                        removed += 1
+                if removed:
+                    log.info("control loops: removed %d loop(s) with kindless targets", removed)
+                self._conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
             self._conn.commit()
 
     @staticmethod
@@ -483,81 +494,69 @@ class ControlLoopStore:
             self._conn.close()
 
 
-def _safe_attributes(entity: HomeAssistantEntity) -> dict:
-    return {
-        key: value
-        for key, value in entity.attributes.items()
-        if key not in _IGNORED_ATTRIBUTES
-    }
-
-
-def _entity_snapshot(entity: HomeAssistantEntity) -> dict:
-    return {
-        "name": entity.name,
-        "state": entity.state,
-        "attributes": _safe_attributes(entity),
-    }
+def _coerce_targets(targets: object) -> list[str]:
+    if not isinstance(targets, (list, tuple)):
+        return []
+    return [str(raw).strip() for raw in targets if str(raw).strip()]
 
 
 class ControlTargetReader:
-    """Resolve and read targets from the Home Assistant inventory."""
+    """Resolve and read `kind:id` targets through the readers the enabled plugins provide."""
 
-    def __init__(
-        self,
-        home_assistant: HomeAssistantClient | None = None,
-    ) -> None:
-        self._home_assistant = home_assistant
+    def __init__(self, readers: dict[str, TargetReader] | None = None) -> None:
+        self._readers: dict[str, TargetReader] = dict(readers or {})
 
     def resolve(self, targets: object) -> tuple[list[str], str | None]:
-        if not isinstance(targets, list) or not targets:
-            return [], "At least one Home Assistant entity is required."
-        if len(targets) > 32:
-            return [], "A control loop can monitor at most 32 targets."
-        if self._home_assistant is None:
-            return [], "Home Assistant is not configured."
-        ha_error: str | None = None
+        requested = _coerce_targets(targets)
+        if not requested:
+            return [], "At least one target is required."
+        if not self._readers:
+            return [], "No target sources are configured."
+        catalog: dict[str, list[tuple[str, str]]] = {}  # kind -> [(id, name)]
         try:
-            entities = self._home_assistant.list_entities()
+            for kind, reader in self._readers.items():
+                catalog[kind] = [(info.id, info.name) for info in reader.list_targets()]
         except Exception as exc:
-            entities = []
-            ha_error = str(exc)
-
-        resolved: list[str] = []
-        for raw in targets:
-            target = str(raw).strip()
-            needle = target.lower()
-            candidates: list[tuple[str, str]] = []
-            for entity in entities:
-                key = f"ha:{entity.entity_id}"
-                if needle in {key.lower(), entity.entity_id.lower(), entity.name.lower()}:
-                    candidates.append((key, entity.name))
+            return [], f"Could not list targets: {exc}"
+        keys: list[str] = []
+        for raw in requested:
+            candidates = _candidates(catalog, raw)
             if not candidates:
-                for entity in entities:
-                    if needle and (needle in entity.entity_id.lower() or needle in entity.name.lower()):
-                        candidates.append((f"ha:{entity.entity_id}", entity.name))
-            if not candidates:
-                if ha_error:
-                    return [], (
-                        f"Could not check Home Assistant for '{target}': {ha_error}"
-                    )
-                return [], f"I don't see a Home Assistant target matching '{target}'."
+                return [], f"I don't see a target matching '{raw}'."
             if len(candidates) > 1:
                 choices = ", ".join(f"{name} ({key})" for key, name in candidates[:8])
-                return [], f"'{target}' matches more than one target: {choices}."
+                return [], f"'{raw}' matches more than one target: {choices}."
             key = candidates[0][0]
-            if key not in resolved:
-                resolved.append(key)
-        return resolved, None
+            if key not in keys:
+                keys.append(key)
+        return keys, None
 
     def read(self, target: str) -> dict:
-        source, separator, identifier = target.partition(":")
+        kind, separator, identifier = target.partition(":")
         if not separator:
             raise ValueError(f"invalid control-loop target: {target}")
-        if source == "ha":
-            if self._home_assistant is None:
-                raise ValueError("Home Assistant is not configured")
-            return _entity_snapshot(self._home_assistant.get_entity(identifier))
-        raise ValueError(f"unknown control-loop target source: {source}")
+        reader = self._readers.get(kind)
+        if reader is None:
+            raise ValueError(f"unknown control-loop target kind: {kind}")
+        return reader.read(identifier)
+
+
+def _candidates(catalog: dict[str, list[tuple[str, str]]], raw: str) -> list[tuple[str, str]]:
+    """Exact `kind:id` first; otherwise exact id/name across every kind, then substrings."""
+    kind, separator, identifier = raw.partition(":")
+    if separator and kind in catalog:
+        return [(f"{kind}:{entry_id}", name) for entry_id, name in catalog[kind] if entry_id == identifier]
+    needle = raw.lower()
+    exact: list[tuple[str, str]] = []
+    partial: list[tuple[str, str]] = []
+    for kind_name, entries in catalog.items():
+        for entry_id, name in entries:
+            key = f"{kind_name}:{entry_id}"
+            if needle in {key.lower(), entry_id.lower(), name.lower()}:
+                exact.append((key, name))
+            elif needle in entry_id.lower() or needle in name.lower():
+                partial.append((key, name))
+    return exact or partial
 
 
 def _value(value) -> str:

@@ -1,4 +1,8 @@
+import logging
+import sqlite3
 from datetime import datetime, timezone
+
+import pytest
 
 from richard.control_loops import (
     ControlLoopMonitor,
@@ -6,37 +10,35 @@ from richard.control_loops import (
     ControlTargetReader,
     describe_changes,
 )
-from richard.plugins.home_assistant.client import HomeAssistantEntity
+from richard.plugins.base import TargetInfo
 
 
-class FakeHomeAssistant:
+class FakeReader:
+    """A TargetReader for kind "ha" backed by a dict; the same shape a plugin returns."""
+
     def __init__(self):
-        self.entities = {
-            "light.workbench": HomeAssistantEntity(
-                "light.workbench",
-                "off",
-                {"friendly_name": "Workbench Lamp", "brightness": 0},
-            ),
-            "sensor.temperature": HomeAssistantEntity(
-                "sensor.temperature",
-                "20",
-                {"friendly_name": "Kitchen Temperature", "unit_of_measurement": "°C"},
-            ),
+        self.snapshots = {
+            "light.workbench": {"name": "Workbench Lamp", "state": "off", "attributes": {"brightness": 0}},
+            "sensor.temperature": {"name": "Kitchen Temperature", "state": "20", "attributes": {"unit_of_measurement": "°C"}},
+            "binary_sensor.front_door": {"name": "Front Door", "state": "off", "attributes": {}},
         }
 
-    def list_entities(self):
-        return list(self.entities.values())
-
-    def get_entity(self, entity_id):
+    def read(self, target_id):
         try:
-            return self.entities[entity_id]
+            return dict(self.snapshots[target_id])
         except KeyError:
-            raise RuntimeError(f"unknown entity: {entity_id}") from None
+            raise RuntimeError(f"unknown entity: {target_id}") from None
+
+    def list_targets(self):
+        return [TargetInfo(id=key, name=value["name"]) for key, value in self.snapshots.items()]
+
+    def verify(self, target_id, expected):
+        raise NotImplementedError
 
 
 def _reader():
-    ha = FakeHomeAssistant()
-    return ControlTargetReader(home_assistant=ha), ha
+    fake = FakeReader()
+    return ControlTargetReader(readers={"ha": fake}), fake
 
 
 def test_store_create_update_pause_resume_and_delete():
@@ -59,7 +61,7 @@ def test_store_create_update_pause_resume_and_delete():
 
 
 def test_target_reader_resolves_names_and_entity_ids():
-    reader, _ha = _reader()
+    reader, _fake = _reader()
     targets, error = reader.resolve(["Workbench Lamp", "sensor.temperature"])
     assert error is None
     assert targets == ["ha:light.workbench", "ha:sensor.temperature"]
@@ -68,10 +70,8 @@ def test_target_reader_resolves_names_and_entity_ids():
 
 
 def test_target_reader_reports_ambiguous_name():
-    reader, ha = _reader()
-    ha.entities["light.workbench_2"] = HomeAssistantEntity(
-        "light.workbench_2", "off", {"friendly_name": "Workbench Lamp"}
-    )
+    reader, fake = _reader()
+    fake.snapshots["light.workbench_2"] = {"name": "Workbench Lamp", "state": "off", "attributes": {}}
     targets, error = reader.resolve(["Workbench Lamp"])
     assert targets == []
     assert "more than one" in error
@@ -79,7 +79,7 @@ def test_target_reader_reports_ambiguous_name():
 
 
 def test_monitor_baselines_then_notifies_llm_once_for_multi_target_change():
-    reader, ha = _reader()
+    reader, fake = _reader()
     store = ControlLoopStore(":memory:")
     loop = store.create(
         name="Kitchen watch",
@@ -97,14 +97,10 @@ def test_monitor_baselines_then_notifies_llm_once_for_multi_target_change():
     assert monitor.check_once(force=True) == []  # first read is only the baseline
     assert store.get(loop.id).last_snapshot["ha:light.workbench"]["state"] == "off"
 
-    ha.entities["light.workbench"] = HomeAssistantEntity(
-        "light.workbench", "on", {"friendly_name": "Workbench Lamp", "brightness": 80}
-    )
-    ha.entities["sensor.temperature"] = HomeAssistantEntity(
-        "sensor.temperature",
-        "31",
-        {"friendly_name": "Kitchen Temperature", "unit_of_measurement": "°C"},
-    )
+    fake.snapshots["light.workbench"] = {"name": "Workbench Lamp", "state": "on", "attributes": {"brightness": 80}}
+    fake.snapshots["sensor.temperature"] = {
+        "name": "Kitchen Temperature", "state": "31", "attributes": {"unit_of_measurement": "°C"},
+    }
     changes = monitor.check_once(force=True)
     assert len(changes) == 1
     assert "Workbench Lamp" in changes[0].summary
@@ -118,7 +114,7 @@ def test_monitor_baselines_then_notifies_llm_once_for_multi_target_change():
 
 
 def test_monitor_records_read_errors_without_overwriting_baseline():
-    reader, ha = _reader()
+    reader, fake = _reader()
     store = ControlLoopStore(":memory:")
     loop = store.create(
         name="Lamp",
@@ -129,7 +125,7 @@ def test_monitor_records_read_errors_without_overwriting_baseline():
     monitor = ControlLoopMonitor(store, reader, lambda change: "done")
     monitor.check_once(force=True)
     baseline = store.get(loop.id).last_snapshot
-    del ha.entities["light.workbench"]
+    del fake.snapshots["light.workbench"]
     assert monitor.check_once(force=True) == []
     current = store.get(loop.id)
     assert "light.workbench" in current.last_error
@@ -137,7 +133,7 @@ def test_monitor_records_read_errors_without_overwriting_baseline():
 
 
 def test_monitor_suppresses_inbox_item_when_llm_says_trigger_did_not_match():
-    reader, ha = _reader()
+    reader, fake = _reader()
     store = ControlLoopStore(":memory:")
     store.create(
         name="Only bright",
@@ -149,9 +145,7 @@ def test_monitor_suppresses_inbox_item_when_llm_says_trigger_did_not_match():
         store, reader, lambda change: "CONTROL_LOOP_NO_TRIGGER"
     )
     monitor.check_once(force=True)
-    ha.entities["light.workbench"] = HomeAssistantEntity(
-        "light.workbench", "on", {"friendly_name": "Workbench Lamp", "brightness": 20}
-    )
+    fake.snapshots["light.workbench"] = {"name": "Workbench Lamp", "state": "on", "attributes": {"brightness": 20}}
     assert len(monitor.check_once(force=True)) == 1
     assert store.notifications() == []
 
@@ -499,3 +493,68 @@ def test_scheduled_llm_failure_writes_error_notification():
     assert len(notes) == 1
     assert notes[0].error == "brain down"
     assert monitor.check_once() == []  # occurrence not replayed after the failure
+
+
+def test_read_unknown_kind_is_an_error():
+    reader = ControlTargetReader(readers={"ha": FakeReader()})
+    with pytest.raises(ValueError, match="unknown control-loop target kind: reachy"):
+        reader.read("reachy:face_present")
+
+
+def test_read_without_kind_is_an_error():
+    reader = ControlTargetReader(readers={"ha": FakeReader()})
+    with pytest.raises(ValueError, match="invalid control-loop target"):
+        reader.read("light.workbench")
+
+
+def test_resolve_searches_every_kind_and_prefers_exact_ids():
+    class Reachy:
+        def read(self, target_id):
+            return {"name": "face", "state": "absent", "attributes": {}}
+
+        def list_targets(self):
+            return [TargetInfo("face_present", "Face present")]
+
+        def verify(self, target_id, expected):
+            raise NotImplementedError
+
+    reader = ControlTargetReader(readers={"ha": FakeReader(), "reachy": Reachy()})
+    keys, error = reader.resolve(["reachy:face_present", "Workbench Lamp", "sensor.temperature"])
+    assert error is None
+    assert keys == ["reachy:face_present", "ha:light.workbench", "ha:sensor.temperature"]
+
+
+def test_resolve_with_no_readers_says_so():
+    reader = ControlTargetReader(readers={})
+    assert reader.resolve(["ha:light.workbench"]) == ([], "No target sources are configured.")
+
+
+def test_migration_deletes_kindless_rows_and_logs_once(tmp_path, caplog):
+    path = tmp_path / "loops.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """
+        CREATE TABLE control_loops (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, targets TEXT NOT NULL,
+            trigger_description TEXT NOT NULL, interval_seconds REAL NOT NULL,
+            enabled INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+            last_checked_at TEXT, last_changed_at TEXT, last_snapshot TEXT, last_error TEXT,
+            kind TEXT NOT NULL DEFAULT 'change', schedule TEXT, next_run_at TEXT
+        );
+        INSERT INTO control_loops (name, targets, trigger_description, interval_seconds, created_at, updated_at)
+        VALUES ('kinded', '["ha:light.one"]', 'when on', 30, '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00'),
+               ('kindless', '["light.two", "ha:light.three"]', 'when on', 30, '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00');
+        """
+    )
+    conn.commit()
+    conn.close()
+    with caplog.at_level(logging.INFO, logger="richard.control_loops"):
+        store = ControlLoopStore(path)
+    assert [loop.name for loop in store.all()] == ["kinded"]
+    assert "removed 1 loop(s) with kindless targets" in caplog.text
+    assert sqlite3.connect(path).execute("PRAGMA user_version").fetchone()[0] == 2
+    store.close()
+    # Reopening is silent and idempotent.
+    caplog.clear()
+    ControlLoopStore(path).close()
+    assert "kindless" not in caplog.text

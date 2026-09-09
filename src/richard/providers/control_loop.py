@@ -33,7 +33,7 @@ CREATE_SCHEMA = {
     "function": {
         "name": "create_control_loop",
         "description": (
-            "Create a persistent background monitor for Home Assistant entities. "
+            "Create a persistent background monitor for connected targets (for example Home Assistant entities). "
             "After its first baseline read, a state or attribute change wakes Richard's LLM."
         ),
         "parameters": {
@@ -46,7 +46,7 @@ CREATE_SCHEMA = {
                     "minItems": 1,
                     "maxItems": 32,
                     "description": (
-                        "Home Assistant entity ids or friendly names. "
+                        "Target ids as kind:id (for example ha:light.kitchen) or friendly names. "
                         "Required unless a schedule is given."
                     ),
                 },
@@ -163,8 +163,8 @@ class ControlLoopProvider:
 
     def context(self) -> str | None:
         return (
-            "You can create persistent control loops that monitor Home Assistant "
-            "entities and wake you when state or attributes change. Each "
+            "You can create persistent control loops that monitor connected targets "
+            "(kind:id, for example ha:light.kitchen) and wake you when state or attributes change. Each "
             "loop has a natural-language trigger description that you evaluate after a change. "
             "Create one only when the user explicitly "
             "asks for ongoing monitoring or automation. The first poll establishes a baseline; "
