@@ -10,7 +10,11 @@ Richard watches continuously and speaks rarely. Three stages:
    transitions only, a cooldown per event and person, quiet hours, a master switch.
 3. **Brain.** An admitted event becomes a `[perception] HH:MM ...` line in the open realtime
    conversation before its next turn, or a control-loop event (`perception:person_present`,
-   `perception:identified:<name>`) when nobody is talking. Richard can look himself with
+   `perception:identified:<name>`) when nobody is talking. Arrivals (`person_entered`,
+   `identified`, `unknown_person`) also **wake** an idle session: Richard runs a turn on the
+   line right away, told that he was not addressed and may answer exactly `NOTHING_TO_SAY`
+   to stay silent; the sentinel is held back and never spoken. Departures, scene changes and
+   stillness only ride along as context. Richard can look himself with
    `camera(question, detail, region)`: low = 800 px, high = the source's native frame,
    region = a crop at native resolution (`left|right|centre|top|bottom` or `x0,y0,x1,y1`).
    `who_is_here` and `last_seen(name)` answer from the presence log.

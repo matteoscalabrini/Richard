@@ -24,6 +24,13 @@ BRAIN_DOWN_LINE = "I can't reach my brain right now."
 TURN_FAILED_LINE = "Something went wrong on my end."
 IMAGE_REJECTED_LINE = "I couldn't take that picture in."
 NO_CLIENT_RESULT = "no result from client"
+# An unsolicited turn (a perception wake-up) may decide to stay silent. The sentinel is
+# held back from the chunker and never spoken or stored (same idiom as NOTHING_TO_RUN).
+NOTHING_TO_SAY = "NOTHING_TO_SAY"
+UNSOLICITED_RULE = (
+    "You were not addressed. Say something only if it is worth saying right now "
+    f"(a greeting, a remark worth making); otherwise reply exactly {NOTHING_TO_SAY}."
+)
 
 
 class RealtimeSession:
@@ -43,6 +50,7 @@ class RealtimeSession:
         self._clock_hm = clock_hm
         self._context: list[str] = []
         self._context_lock = threading.Lock()
+        self._unsolicited = False  # the next turn was started by wake(), not by the user
         # Tools the connected client owns (the Reachy app's camera, the browser's
         # webcam), as chat-completions schemas. The engine defers their calls to us.
         self.client_tools: list[dict] = []
@@ -104,6 +112,15 @@ class RealtimeSession:
     def _has_context(self) -> bool:
         with self._context_lock:
             return bool(self._context)
+
+    def wake(self) -> bool:
+        """Run an unsolicited turn on the queued context, if idle. False when nothing is
+        queued or a response is active (the context then waits for the next turn)."""
+        if self.state != "listening" or not self._has_context():
+            return False
+        self._unsolicited = True
+        self._start_turn(None)
+        return True
 
     def create_response(self) -> None:
         """Run a turn on the conversation as it stands (GA semantics)."""
@@ -232,8 +249,11 @@ class RealtimeSession:
         # A call the client never answered would leave a tool call without a result in
         # the served prefix; seal it so the model sees the failure instead of a broken prompt.
         self.conversation.seal_pending(NO_CLIENT_RESULT)
+        unsolicited, self._unsolicited = self._unsolicited, False
         context = self._drain_context()
         if context:
+            if unsolicited:
+                context += "\n" + UNSOLICITED_RULE
             self.conversation.add_user(context)
         if user_text is not None:
             self.conversation.add_user(user_text)
@@ -243,11 +263,21 @@ class RealtimeSession:
         full = ""
         status = "completed"
         handed_to_client = False
+        # Unsolicited turns hold their text back while it could still be the silence
+        # sentinel; the first token that rules it out flushes everything held.
+        holding = unsolicited
+        held = ""
         try:
             for delta in self._engine.respond_streaming(self.conversation, client_tools=self.client_tools):
                 if self._interrupt.is_set():
                     status = "cancelled"
                     break
+                if holding and isinstance(delta, str):
+                    held += delta
+                    if NOTHING_TO_SAY.startswith(held.strip().rstrip(".").strip()):
+                        continue
+                    holding = False
+                    delta, held = held, ""
                 if isinstance(delta, ClientToolCall):
                     # The engine recorded the call and ends the turn; the client runs the
                     # tool and asks for a new response. Speak what was said before it.
@@ -265,6 +295,14 @@ class RealtimeSession:
                 if not all(self._speak(response_id, c) for c in chunker.feed(delta)):
                     status = "cancelled"
                     break
+            if holding and held.strip():
+                # The stream ended while held: the sentinel (stay silent) or a short reply
+                # that merely looked like its start (speak it after all).
+                if held.strip().rstrip(".").strip() != NOTHING_TO_SAY:
+                    full += held
+                    self._emit(events.text_delta(response_id, held))
+                    if not all(self._speak(response_id, c) for c in chunker.feed(held)):
+                        status = "cancelled"
             if status == "completed" and not handed_to_client:
                 tail = chunker.flush()
                 if tail and not self._speak(response_id, tail):

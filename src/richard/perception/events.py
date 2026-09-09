@@ -60,11 +60,14 @@ class PresenceState:
     """One source's people, as a debounced state machine."""
 
     def __init__(self, source_id: str, *, enter_debounce_s: float = 2.0, leave_debounce_s: float = 10.0,
-                 unknown_after_s: float = 20.0) -> None:
+                 unknown_after_s: float = 20.0, report_unknown: bool = True) -> None:
         self.source_id = source_id
         self._enter = enter_debounce_s
         self._leave = leave_debounce_s
         self._unknown_after = unknown_after_s
+        # "An unknown person" only means something when recognition is on; without a
+        # gallery everyone is unknown and the event would be noise.
+        self._report_unknown = report_unknown
         self._candidate_since: float | None = None
         self._person: PresentPerson | None = None  # one presence slot: "someone is here", named or not
 
@@ -93,7 +96,8 @@ class PresenceState:
                 if person.votes[name] >= 2 and person.subject != name:
                     person.subject = name
                     events.append(PerceptionEvent(ts, self.source_id, "identified", name, 0.9, persons[0].box))
-            if person.subject == "unknown" and not person.unknown_reported and ts - person.since >= self._unknown_after:
+            if (self._report_unknown and person.subject == "unknown" and not person.unknown_reported
+                    and ts - person.since >= self._unknown_after):
                 person.unknown_reported = True
                 events.append(PerceptionEvent(ts, self.source_id, "unknown_person", "unknown", persons[0].score, persons[0].box))
             return events

@@ -88,12 +88,12 @@ def test_context_sink_takes_events_instead_of_loop_sinks(tmp_path):
     loop_events = []
     lines = []
     stop = svc.event_source(loop_events.append)
-    svc.set_context_sink(lambda line: lines.append(line) or True)
+    svc.set_context_sink(lambda line, wake=False: lines.append((line, wake)) or True)
     svc.push_frame("browser", _jpeg((0, 0, 0)))
     svc.process("browser")
-    assert lines == ["someone entered (browser)"]
+    assert lines == [("someone entered (browser)", True)]  # an arrival wakes the session
     assert loop_events == []
-    svc.set_context_sink(lambda line: False)
+    svc.set_context_sink(lambda line, wake=False: False)
     svc._pipelines["browser"]._person_detector = ScriptedPersons([[]])
     clock.t = 1020.0
     svc.push_frame("browser", _jpeg((0, 0, 0)))

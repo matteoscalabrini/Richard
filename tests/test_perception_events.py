@@ -72,3 +72,10 @@ def test_presence_log_round_trip(tmp_path):
     assert log.last_seen("matteo")["id"] == 2 and log.last_seen("nobody") is None
     assert log.thumbnail(2) == b"\xff\xd8"
     log.close()
+
+
+def test_unknown_person_is_never_reported_when_identity_is_off():
+    state = PresenceState("browser", enter_debounce_s=0.0, unknown_after_s=5.0, report_unknown=False)
+    state.observe(0.0, [BOX], [None])
+    assert state.observe(6.0, [BOX], [None]) == []
+    assert state.observe(30.0, [BOX], [None]) == []

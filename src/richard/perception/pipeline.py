@@ -24,6 +24,10 @@ from richard.plugins.base import Event
 
 log = logging.getLogger("richard.perception")
 
+# Events worth waking an idle conversation for: somebody is here. Departures, scene
+# changes and stillness ride along as context and wait for the next turn.
+WAKE_KINDS = frozenset({"person_entered", "identified", "unknown_person"})
+
 
 @dataclass
 class Settings:
@@ -71,7 +75,8 @@ class SourcePipeline:
         self._motion = MotionDetector(threshold=settings.motion_threshold)
         self._stillness = StillnessTracker()
         self.presence = PresenceState(source_id, enter_debounce_s=settings.enter_debounce_s,
-                                      leave_debounce_s=settings.leave_debounce_s)
+                                      leave_debounce_s=settings.leave_debounce_s,
+                                      report_unknown=settings.identity_enabled)
         self._last_ts: float | None = None
         self._last_face_at: float = -1e9
         self.frames = 0
@@ -245,7 +250,7 @@ class PerceptionService:
             taken = False
             if self._context_sink is not None:
                 try:
-                    taken = bool(self._context_sink(event.line()))
+                    taken = bool(self._context_sink(event.line(), wake=event.kind in WAKE_KINDS))
                 except Exception as exc:
                     log.warning("perception: context sink failed: %s", exc)
             if not taken:

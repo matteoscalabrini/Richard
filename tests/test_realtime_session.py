@@ -582,3 +582,59 @@ def test_queued_context_alone_makes_response_create_run_a_turn():
     assert engine.seen[1][-1] == ("user", "[perception] 18:42 someone entered (browser)")
     assert "response.audio.delta" in [e["type"] for e in emitted]
     session.close()
+
+
+def test_wake_runs_an_unsolicited_turn_with_the_context_and_the_silence_rule():
+    engine = FakeEngine(deltas=("Hi Matteo, ", "welcome back."))
+    session, emitted, done = collect_session(engine=engine, detector=ScriptedDetector([]), clock_hm=lambda: "19:42")
+    session.add_context("matteo recognised (browser)")
+    assert session.wake() is True
+    wait(done)
+    role, content = engine.seen[0][-1]
+    assert role == "user" and content.startswith("[perception] 19:42 matteo recognised (browser)")
+    assert "NOTHING_TO_SAY" in content  # the silence rule rides with the unsolicited item
+    kinds = [e["type"] for e in emitted]
+    assert "response.output_text.delta" in kinds and "response.audio.delta" in kinds
+    assert session.conversation.history()[-1].content == "Hi Matteo, welcome back."
+    session.close()
+
+
+def test_wake_without_context_or_while_busy_does_nothing():
+    session, emitted, done = collect_session(detector=ScriptedDetector([]))
+    assert session.wake() is False  # nothing queued
+    tts = GatedTTS()
+    busy, emitted2, done2 = collect_session(tts=tts, detector=ScriptedDetector([]))
+    busy.create_item({"kind": "message", "content": "hi"})
+    busy.create_response()
+    assert tts.entered.wait(5)
+    busy.add_context("someone entered (browser)")
+    assert busy.wake() is False  # a turn is running; the line waits for the next turn
+    tts.release.set()
+    wait(done2)
+    assert busy._has_context() is True
+    session.close(); busy.close()
+
+
+def test_silence_sentinel_is_neither_spoken_nor_stored():
+    engine = FakeEngine(deltas=("NOTHING", "_TO_SAY."))
+    session, emitted, done = collect_session(engine=engine, detector=ScriptedDetector([]))
+    session.add_context("someone entered (browser)")
+    assert session.wake() is True
+    wait(done)
+    kinds = [e["type"] for e in emitted]
+    assert "response.output_text.delta" not in kinds and "response.audio.delta" not in kinds
+    assert emitted[-1]["response"]["status"] == "completed"
+    assert [m.role for m in session.conversation.history()] == ["user"]  # the perception item only
+    session.close()
+
+
+def test_unsolicited_reply_that_merely_starts_like_the_sentinel_is_spoken():
+    engine = FakeEngine(deltas=("NOT", "HING beats a coffee. Welcome back."))
+    session, emitted, done = collect_session(engine=engine, detector=ScriptedDetector([]))
+    session.add_context("someone entered (browser)")
+    session.wake()
+    wait(done)
+    text = "".join(e["delta"] for e in emitted if e["type"] == "response.output_text.delta")
+    assert text == "NOTHING beats a coffee. Welcome back."
+    assert session.conversation.history()[-1].content == text
+    session.close()

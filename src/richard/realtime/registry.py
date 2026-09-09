@@ -25,8 +25,12 @@ class SessionRegistry:
         with self._lock:
             return list(self._sessions)
 
-    def offer_context(self, line: str) -> bool:
+    def offer_context(self, line: str, wake: bool = False) -> bool:
+        """Queue a context line on every open session; with `wake`, ask each idle session
+        to run an unsolicited turn on it now (busy sessions keep it for their next turn)."""
         sessions = self.active()
         for session in sessions:
             session.add_context(line)
+            if wake:
+                session.wake()
         return bool(sessions)
