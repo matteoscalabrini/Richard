@@ -140,6 +140,7 @@ SPA_HTML = r"""<!DOCTYPE html>
   .chat-avatar { width: 18px; height: 18px; flex-shrink: 0; margin-top: 2px; object-fit: contain; }
   .chat-empty { color: var(--text-secondary); font-style: italic; }
   .chat-thumb { display: block; max-width: 160px; max-height: 120px; border: var(--pixel-border); margin-top: 0.3rem; }
+  .chat-thumb[hidden], .status-indicator[hidden] { display: none; }  /* class display rules would beat [hidden] */
   .attach-chip {
     display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.35rem; padding: 0.3rem 0.5rem;
     border: var(--pixel-border); background: var(--surface-light); font-size: 0.8rem;
@@ -383,6 +384,7 @@ SPA_HTML = r"""<!DOCTYPE html>
       <h1>RICHARD</h1>
     </div>
     <div class="right-header">
+      <span class="status-indicator" id="perception-indicator" title="This device's camera is streaming to Richard" hidden>◉ camera</span>
       <div class="status-indicator" id="connection-status">
         <span class="status-dot"></span>
         <span class="status-text" id="conn-text">online</span>
@@ -436,13 +438,14 @@ SPA_HTML = r"""<!DOCTYPE html>
 
     <section class="drawer-page" data-drawer-page="configuration" hidden>
       <button type="button" class="drawer-back" data-drawer-back="menu">‹ Back to menu</button>
-      <div class="drawer-title" tabindex="-1"><b>&gt; CONFIGURATION</b><span>05 PAGES</span></div>
+      <div class="drawer-title" tabindex="-1"><b>&gt; CONFIGURATION</b><span>06 PAGES</span></div>
       <p class="drawer-copy">Settings are grouped by the part of Richard they change.</p>
       <nav class="drawer-nav" aria-label="Configuration pages">
         <button type="button" data-drawer-open="brain">Brain <span>LLM ›</span></button>
         <button type="button" data-drawer-open="personality">Personality <span>RICHARD ›</span></button>
         <button type="button" data-drawer-open="voice">Voice <span>STT + TTS ›</span></button>
         <button type="button" data-drawer-open="plugins">Plugins <span>CONNECTIONS ›</span></button>
+        <button type="button" data-drawer-open="perception">Perception <span>CAMERA ›</span></button>
         <button type="button" data-drawer-open="network">Network <span>REALTIME + RELAY + WEB ›</span></button>
       </nav>
     </section>
@@ -493,6 +496,12 @@ SPA_HTML = r"""<!DOCTYPE html>
       <button type="button" class="drawer-back" data-drawer-back="configuration">‹ Back to configuration</button>
       <div class="drawer-title" tabindex="-1"><b>&gt; PLUGINS</b><span>system.plugins</span></div>
       <div class="drawer-page-body" data-panel-content="plugins-content home-assistant-content"></div>
+    </section>
+
+    <section class="drawer-page" data-drawer-page="perception" hidden>
+      <button type="button" class="drawer-back" data-drawer-back="configuration">‹ Back to configuration</button>
+      <div class="drawer-title" tabindex="-1"><b>&gt; PERCEPTION</b><span>AMBIENT CAMERA</span></div>
+      <div class="drawer-page-body" data-panel-content="perception-content perception-gallery-content"></div>
     </section>
 
     <section class="drawer-page" data-drawer-page="network" hidden>
@@ -751,6 +760,52 @@ SPA_HTML = r"""<!DOCTYPE html>
           <div class="lede" id="home-assistant-domain-summary" style="margin:0;"></div>
           <div class="entry-list" id="home-assistant-entity-list" style="max-height:320px;overflow-y:auto;"><div class="empty-message">Test the connection to load entities.</div></div>
         </div>
+      </div>
+    </div>
+
+    <!-- system.perception.ambient -->
+    <div class="terminal-section">
+      <div class="terminal-header-line" data-target="perception-content">
+        <span class="terminal-prompt">&gt; </span>
+        <span class="terminal-command window-title">system.perception.ambient</span>
+        <span class="window-control is-open">[_]</span>
+      </div>
+      <div class="window-content" id="perception-content">
+        <p class="lede">Richard watches the camera continuously at almost no cost and is told only about transitions: someone arrived, left, was recognised, the scene changed. Enable the plugin, allow the camera on this device, and restart to apply settings.</p>
+        <div class="setting-group"><div class="checkbox-btn"><input type="checkbox" id="perception.plugin_enabled"><label for="perception.plugin_enabled">Perception plugin enabled</label><span class="checkmark"></span></div><span class="hint">Disabled means invisible to Richard: no events, no camera tool, no stream accepted.</span></div>
+        <div class="setting-group"><div class="checkbox-btn"><input type="checkbox" id="perception.identity_enabled"><label for="perception.identity_enabled">Recognise enrolled people</label><span class="checkmark"></span></div><span class="hint">Opt-in. Faces are matched against the local gallery below; nothing leaves this box.</span></div>
+        <div class="field-row">
+          <div class="setting-group"><label class="setting-label">Quiet hours</label><input id="perception.quiet_hours" class="setting-input" placeholder="23:00-07:30"><span class="hint">No events reach Richard in this window.</span></div>
+          <div class="setting-group"><label class="setting-label">Sensitivity</label><input id="perception.sensitivity" class="setting-input" type="number" min="0" max="100"></div>
+          <div class="setting-group"><label class="setting-label">Cooldown (s)</label><input id="perception.cooldown_s" class="setting-input" type="number" min="0"></div>
+        </div>
+        <div class="field-row">
+          <div class="setting-group"><label class="setting-label">Stream frames per second</label><input id="perception.stream_fps" class="setting-input" type="number" min="0.5" max="10" step="0.5"></div>
+          <div class="setting-group"><div class="checkbox-btn"><input type="checkbox" id="perception.keep_thumbnails"><label for="perception.keep_thumbnails">Keep a thumbnail per event</label><span class="checkmark"></span></div></div>
+        </div>
+        <div class="button-row"><button class="setting-button" id="perception-save">Save changes</button><button class="setting-button small" id="perception-restart">Restart to apply</button><div class="status-line" id="perception-status"></div></div>
+        <label class="setting-label spread">Live <span id="perception-sources">—</span></label>
+        <img id="perception-latest" class="chat-thumb" alt="latest frame" hidden>
+        <label class="setting-label spread">Events <span id="perception-presence">nobody in view</span></label>
+        <div class="entry-list" id="perception-events" style="max-height:260px;overflow-y:auto;"><div class="empty-message">No events yet.</div></div>
+      </div>
+    </div>
+
+    <!-- system.perception.gallery -->
+    <div class="terminal-section">
+      <div class="terminal-header-line" data-target="perception-gallery-content">
+        <span class="terminal-prompt">&gt; </span>
+        <span class="terminal-command window-title">system.perception.gallery</span>
+        <span class="window-control is-open">[_]</span>
+      </div>
+      <div class="window-content" id="perception-gallery-content">
+        <p class="lede">People Richard may recognise. Enrolment takes three snapshots from this device's camera; each entry can be deleted at any time and is then forgotten for good.</p>
+        <div class="field-row">
+          <div class="setting-group"><label class="setting-label">Name</label><input id="perception-enrol-name" class="setting-input" placeholder="Matteo"></div>
+          <div class="setting-group"><label class="setting-label">&nbsp;</label><button class="setting-button" id="perception-enrol">Enrol from camera</button></div>
+        </div>
+        <div class="status-line" id="perception-gallery-status"></div>
+        <div class="entry-list" id="perception-gallery"><div class="empty-message">Nobody enrolled.</div></div>
       </div>
     </div>
 
@@ -1393,6 +1448,7 @@ async function refreshAll(){
     renderMemories(memories.memories);
     try { await loadVoices(); } catch (e) {}
     try { await loadPlugins(); } catch (e) {}
+    try { await syncPerceptionStream(); } catch (e) {}
     try { await refreshHomeAssistant(); } catch (e) {}
     try { await refreshControlData(); } catch (e) { setStatus('control-loop', 'unavailable: ' + e.message, 'err'); }
   } catch (e) { setConnected(false); }
@@ -1755,6 +1811,127 @@ async function onRecordingStop(){
   finally { $('chat-mic').disabled = false; $('chat-send').disabled = false; }
 }
 
+/* ---- ambient perception: this device's camera as a frame source, and the page ---- */
+const perception = {video: null, stream: null, timer: null, enabled: false, fps: 2, poll: null};
+async function startPerceptionStream(){
+  if (perception.timer || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+  try {
+    perception.stream = await navigator.mediaDevices.getUserMedia({video: {width: {ideal: 1280}, height: {ideal: 720}, facingMode: 'user'}});
+  } catch (e) { setStatus('perception', 'camera blocked: ' + e.message, 'err'); return; }
+  const v = document.createElement('video');
+  v.muted = true; v.playsInline = true; v.autoplay = true; v.hidden = true;
+  v.srcObject = perception.stream; document.body.appendChild(v);
+  try { await v.play(); } catch (_) {}
+  perception.video = v;
+  $('perception-indicator').hidden = false;
+  perception.timer = setInterval(async () => {
+    if (!perception.video || !perception.video.videoWidth) return;
+    const shot = frameFromCanvasSource(perception.video, perception.video.videoWidth, perception.video.videoHeight, 800, 0.7);
+    if (!shot) return;
+    try { await sendJSON('/api/perception/frame', 'POST', {source: 'browser', image_base64: shot.url.split(',')[1]}); }
+    catch (e) { setStatus('perception', 'stream: ' + e.message, 'err'); }
+  }, Math.max(100, 1000 / perception.fps));
+}
+function stopPerceptionStream(){
+  if (perception.timer) { clearInterval(perception.timer); perception.timer = null; }
+  if (perception.stream) { perception.stream.getTracks().forEach(t => t.stop()); perception.stream = null; }
+  if (perception.video) { perception.video.remove(); perception.video = null; }
+  $('perception-indicator').hidden = true;
+}
+function capturePerceptionFrame(maxEdge){
+  const v = perception.video || (rt && rt.video);
+  return v && v.videoWidth ? frameFromCanvasSource(v, v.videoWidth, v.videoHeight, maxEdge, 0.85) : null;
+}
+async function syncPerceptionStream(){
+  let status;
+  try { status = await getJSON('/api/perception/status'); } catch (_) { return; }
+  perception.enabled = !!status.enabled;
+  if (perception.enabled && document.visibilityState === 'visible') startPerceptionStream();
+  else stopPerceptionStream();
+  return status;
+}
+document.addEventListener('visibilitychange', () => { syncPerceptionStream(); });
+
+function renderPerceptionEvents(rows){
+  const box = $('perception-events');
+  if (!rows.length) { box.innerHTML = '<div class="empty-message">No events yet.</div>'; return; }
+  box.innerHTML = rows.slice().reverse().map(r =>
+    '<div class="entry"><div class="entry-main"><div class="entry-name">' + esc(r.kind.replace(/_/g, ' ')) + (r.subject ? ' · ' + esc(r.subject) : '') + '</div>' +
+    '<div class="entry-sub">' + esc((r.at || '').replace('T', ' ').slice(0, 19)) + ' · ' + esc(r.source) + '</div></div></div>').join('');
+}
+function renderGallery(people){
+  const box = $('perception-gallery');
+  if (!people.length) { box.innerHTML = '<div class="empty-message">Nobody enrolled.</div>'; return; }
+  box.innerHTML = people.map(p => '<div class="entry"><div class="entry-main"><div class="entry-name">' + esc(p.name) + '</div><div class="entry-sub">' + p.samples + ' snapshots · ' + esc(p.enrolled_at || '') + '</div></div>' +
+    '<button class="setting-button small" data-gallery-delete="' + esc(p.name) + '">Delete</button></div>').join('');
+}
+async function loadPerception(){
+  try {
+    const cfg = await getJSON('/api/perception/config');
+    for (const key of ['quiet_hours', 'sensitivity', 'cooldown_s', 'stream_fps']) $('perception.' + key).value = cfg[key];
+    $('perception.identity_enabled').checked = !!cfg.identity_enabled;
+    $('perception.keep_thumbnails').checked = !!cfg.keep_thumbnails;
+    const plugins = (await getJSON('/api/plugins')).plugins;
+    const row = plugins.find(p => p.name === 'perception');
+    $('perception.plugin_enabled').checked = !!(row && row.configured);
+    const status = await syncPerceptionStream();
+    if (status && status.enabled) {
+      $('perception-sources').textContent = status.sources.map(s => s.id + (s.stale ? ' (stale)' : '') + ' · ' + s.frames + ' frames').join(', ') || 'no source yet';
+      $('perception-presence').textContent = status.presence.length ? status.presence.map(p => p.subject + ' since ' + Math.round(p.since)).join(', ') : 'nobody in view';
+      renderGallery(status.gallery || []);
+      const ev = await getJSON('/api/perception/events');
+      renderPerceptionEvents(ev.events);
+      const img = $('perception-latest'); img.src = '/api/perception/latest.jpg?t=' + Date.now(); img.hidden = false;
+    } else {
+      $('perception-sources').textContent = 'plugin disabled';
+      $('perception-latest').hidden = true;
+    }
+  } catch (e) { setStatus('perception', 'unavailable: ' + e.message, 'err'); }
+}
+async function savePerception(){
+  const patch = {
+    quiet_hours: $('perception.quiet_hours').value.trim(), sensitivity: Number($('perception.sensitivity').value),
+    cooldown_s: Number($('perception.cooldown_s').value), stream_fps: Number($('perception.stream_fps').value),
+    identity_enabled: $('perception.identity_enabled').checked, keep_thumbnails: $('perception.keep_thumbnails').checked,
+  };
+  try {
+    await sendJSON('/api/perception/config', 'PUT', patch);
+    const wantPlugin = $('perception.plugin_enabled').checked;
+    await sendJSON('/api/plugins', 'PUT', {name: 'perception', enabled: wantPlugin});
+    setStatus('perception', 'saved · restart to apply · ' + hm(), 'ok');
+  } catch (e) { setStatus('perception', 'save failed: ' + e.message, 'err'); }
+}
+async function enrolFace(){
+  const name = $('perception-enrol-name').value.trim();
+  if (!name) { setStatus('perception-gallery', 'a name is required', 'err'); return; }
+  if (!perception.video && !(rt && rt.video)) { await startPerceptionStream(); await new Promise(r => setTimeout(r, 800)); }
+  const shots = [];
+  for (let i = 0; i < 3; i++) {
+    const shot = capturePerceptionFrame(800);
+    if (shot) shots.push(shot.url.split(',')[1]);
+    await new Promise(r => setTimeout(r, 700));
+  }
+  if (shots.length < 3) { setStatus('perception-gallery', 'camera not ready', 'err'); return; }
+  try {
+    const out = await sendJSON('/api/perception/gallery', 'POST', {name, images_base64: shots});
+    setStatus('perception-gallery', out.name + ' enrolled (' + out.samples + ' snapshots) · ' + hm(), 'ok');
+    renderGallery((await getJSON('/api/perception/gallery')).people);
+  } catch (e) { setStatus('perception-gallery', 'enrol failed: ' + e.message, 'err'); }
+}
+$('perception-save').addEventListener('click', savePerception);
+$('perception-restart').addEventListener('click', () => sendJSON('/api/restart', 'POST').catch(() => {}));
+$('perception-enrol').addEventListener('click', enrolFace);
+$('perception-gallery').addEventListener('click', async e => {
+  const b = e.target.closest('[data-gallery-delete]'); if (!b) return;
+  try { await fetch('/api/perception/gallery/' + encodeURIComponent(b.dataset.galleryDelete), {method: 'DELETE'}); renderGallery((await getJSON('/api/perception/gallery')).people); }
+  catch (err) { setStatus('perception-gallery', 'delete failed: ' + err.message, 'err'); }
+});
+document.querySelector('[data-drawer-open="perception"]').addEventListener('click', () => {
+  loadPerception();
+  if (perception.poll) clearInterval(perception.poll);
+  perception.poll = setInterval(() => { if (activeDrawerPage === 'perception') loadPerception(); else { clearInterval(perception.poll); perception.poll = null; } }, 3000);
+});
+
 let activeDrawerPage = 'menu';
 
 function mountDrawerPanels(){
@@ -1894,6 +2071,7 @@ $('voice-mode').addEventListener('click', () => { rt ? stopVoiceMode() : startVo
 refreshAll();
 setInterval(() => { getJSON('/api/status').then(applyStatus).catch(() => setConnected(false)); }, 5000);
 setInterval(() => { refreshControlData().catch(() => {}); }, 10000);
+setInterval(() => { syncPerceptionStream().catch(() => {}); }, 30000);
 </script>
 </body>
 </html>

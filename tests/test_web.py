@@ -288,11 +288,11 @@ def test_web_ui_has_two_stage_drawer_and_all_page_destinations(tmp_path):
     assert 'id="richard-drawer"' in html
     assert 'data-drawer-page="menu"' in html
     assert 'data-drawer-page="configuration"' in html
-    for page in ("conversation", "automations", "memory", "system", "brain", "personality", "voice", "plugins", "network"):
+    for page in ("conversation", "automations", "memory", "system", "brain", "personality", "voice", "plugins", "perception", "network"):
         assert f'data-drawer-page="{page}"' in html
     for gone in ("home-assistant", "satellite", "web-access"):
         assert f'data-drawer-page="{gone}"' not in html
-    assert "05 PAGES" in html and "06 PAGES" not in html
+    assert "06 PAGES" in html and "05 PAGES" not in html
     assert 'data-drawer-open="configuration"' in html
     assert 'data-drawer-back="menu"' in html
     assert 'data-drawer-back="configuration"' in html
@@ -1471,3 +1471,15 @@ def test_perception_config_get_and_put(tmp_path):
     assert "bogus" not in out["config"]
     assert load_config(tmp_path / "config.toml").plugins.tables["perception"]["quiet_hours"] == "23:00-07:30"
     assert app.handle("PUT", "/api/perception/config", b'{"quiet_hours": "late"}').status == 400
+
+
+def test_home_page_has_the_perception_page_and_streamer(tmp_path):
+    html = _app(tmp_path).handle("GET", "/").body.decode()
+    assert 'data-drawer-open="perception"' in html and 'data-drawer-page="perception"' in html
+    assert 'id="perception-content"' in html and 'id="perception-gallery-content"' in html
+    for field in ("identity_enabled", "quiet_hours", "sensitivity", "cooldown_s", "stream_fps", "keep_thumbnails"):
+        assert f'id="perception.{field}"' in html
+    assert 'id="perception-events"' in html and 'id="perception-latest"' in html
+    assert 'id="perception-indicator"' in html
+    assert "function startPerceptionStream(" in html and "'/api/perception/frame'" in html
+    assert "function enrolFace(" in html and "'/api/perception/gallery'" in html
