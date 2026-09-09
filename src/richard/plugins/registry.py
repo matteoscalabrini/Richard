@@ -110,6 +110,11 @@ class PluginRegistry:
                 log.error("plugin %s failed to build:\n%s", name, traceback.format_exc())
                 write(f"Plugin {name} disabled ({exc})")
 
+    def plugin(self, name: str):
+        """The plugin instance behind a record, if loaded (built-ins are registered in memory)."""
+        record = self._records.get(name)
+        return record.plugin if record is not None else None
+
     def records(self) -> list[PluginRecord]:
         """Enabled plugins first, in their configured order, then the rest as discovered."""
         ordered = [self._records[name] for name in self._order if name in self._records]
