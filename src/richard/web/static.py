@@ -1584,9 +1584,9 @@ let rtStarting = false;
 // the robot's protocol path end to end: the brain decides to look, we take the frame.
 const CAMERA_TOOL = {
   type: 'function', name: 'camera',
-  description: 'Take a picture with the webcam to see what is in front of the computer: what the user is holding, how they look, the room. Use it when the user asks you to look at something, what you can see, or wants your visual opinion; if they ask you to look without saying at what, take the picture and describe what you see. Each call captures the current moment. Start with detail low; ask for high only to read text or see small objects.',
+  description: 'Take a picture with the webcam to answer a visual question or investigate something you noticed. Use the image as evidence for your response or next action. A request to look is not automatically a request to describe the scene; describe it only when the user asks for a description. Answer specific visual questions directly. Each call captures the current moment. Start with detail low; ask for high only to read text or see small objects.',
   parameters: {type: 'object', properties: {
-    question: {type: 'string', description: 'What to observe or ask about in the picture.'},
+    question: {type: 'string', description: 'The visual question or uncertainty this picture should help resolve.'},
     detail: {type: 'string', enum: ['low', 'high'], description: 'low (default) or high for small text and details.'}
   }, required: ['question']}
 };

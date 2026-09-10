@@ -14,15 +14,17 @@ CAMERA_SCHEMA = {
         "name": "camera",
         "description": (
             "Take a picture from the live camera to see what is in front of you: who is here, what "
-            "someone is holding, the room. Use it when asked to look, or when an event you were told "
-            "about deserves a closer look. Each call captures the current moment. Start with detail "
+            "someone is holding, the room. Use it to answer a visual question or investigate "
+            "something you noticed. Use the image as evidence for your response or next action; "
+            "describe the scene only when the user asks for a description. Each call captures "
+            "the current moment. Start with detail "
             "'low'; use 'high' only to read text or small objects; use 'region' (left, right, centre, "
             "top, bottom, or x0,y0,x1,y1 in 0..1) to look closely at one part of the view."
         ),
         "parameters": {
             "type": "object",
             "properties": {
-                "question": {"type": "string", "description": "What to observe or ask about in the picture."},
+                "question": {"type": "string", "description": "The visual question or uncertainty this picture should help resolve."},
                 "detail": {"type": "string", "enum": ["low", "high"], "description": "low (default) or high."},
                 "region": {"type": "string", "description": "Optional part of the view to crop at full resolution."},
             },

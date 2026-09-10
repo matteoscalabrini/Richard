@@ -42,10 +42,10 @@ def test_prompt_invites_stating_settings():
 
 
 def test_custom_base_overrides_default():
-    # A custom system prompt replaces the TARS base paragraph...
+    # A custom system prompt replaces the resident companion's base character...
     prompt = build_system_prompt(Personality(system_prompt="You are a terse butler."))
     assert prompt.startswith("You are a terse butler.")
-    assert "companion and steward" not in prompt  # default base is gone
+    assert "resident companion sharing this home" not in prompt  # default base is gone
     # ...but the dial settings block is still appended
     assert "Humour:" in prompt and "Honesty:" in prompt and "Directness:" in prompt
 
@@ -57,7 +57,7 @@ def test_custom_base_substitutes_name():
 
 def test_empty_system_prompt_uses_default_base():
     prompt = build_system_prompt(Personality(name="Richard", system_prompt=""))
-    assert prompt.startswith("You are Richard, companion and steward")
+    assert prompt.startswith("You are Richard, a resident companion sharing this home.")
 
 
 def test_act_in_same_turn_rule_survives_a_custom_base():

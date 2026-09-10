@@ -14,7 +14,7 @@ import threading
 import time
 
 from richard import vision
-from richard.conversation import Conversation
+from richard.conversation import Conversation, Message
 from richard.engine import ClientToolCall
 from richard.errors import BrainRejectedInput, BrainUnreachable
 from richard.realtime import events
@@ -29,9 +29,11 @@ NO_CLIENT_RESULT = "no result from client"
 # held back from the chunker and never spoken or stored (same idiom as NOTHING_TO_RUN).
 NOTHING_TO_SAY = "NOTHING_TO_SAY"
 UNSOLICITED_RULE = (
-    "Nobody addressed you; this is something you noticed. A brief greeting or a remark "
-    "about what you noticed is welcome. If speaking now would be unwelcome or pointless, "
-    f"reply exactly {NOTHING_TO_SAY}."
+    "Nobody addressed you; this is something you noticed. Consider it alongside the available "
+    "conversation and memories. You may look more closely with an available tool, make an "
+    "observation, ask a relevant question, or pick up a shared topic. Speaking is optional; "
+    "avoid repeated greetings or questions. If speaking now would be unwelcome or you have "
+    f"nothing worth saying, reply exactly {NOTHING_TO_SAY}."
 )
 
 log = logging.getLogger("richard.realtime")
@@ -55,6 +57,10 @@ class RealtimeSession:
         self._context: list[str] = []
         self._context_lock = threading.Lock()
         self._unsolicited = False  # the next turn was started by wake(), not by the user
+        self._input_generation = 0
+        # A client tool may split one unsolicited turn across several responses. Bind
+        # its continuation to the input generation so fresh input always takes priority.
+        self._unsolicited_continuation: int | None = None
         # Tools the connected client owns (the Reachy app's camera, the browser's
         # webcam), as chat-completions schemas. The engine defers their calls to us.
         self.client_tools: list[dict] = []
@@ -88,6 +94,8 @@ class RealtimeSession:
         starts until response.create. Raises ValueError when the item cannot be appended."""
         if item["kind"] == "message":
             content = item["content"]
+            if Message(role="user", content=content).text().strip():
+                self._reset_unsolicited()
             self.conversation.add_user(content)
             urls = vision.image_urls(content)
             if urls:
@@ -146,7 +154,13 @@ class RealtimeSession:
         self._start_turn(None)
 
     def cancel_response(self) -> None:
+        self._reset_unsolicited()
         self._interrupt.set()
+
+    def _reset_unsolicited(self) -> None:
+        self._input_generation += 1
+        self._unsolicited = False
+        self._unsolicited_continuation = None
 
     def update(self, patch: dict) -> dict:
         if patch.get("barge_in") in ("vad", "wake", "off"):
@@ -161,6 +175,7 @@ class RealtimeSession:
         }
 
     def close(self) -> None:
+        self._reset_unsolicited()
         if self._registry is not None:
             self._registry.remove(self)
         self._closed.set()
@@ -198,6 +213,7 @@ class RealtimeSession:
     def _handle_frame(self, frame: bytes) -> None:
         for event in self._detector.feed(frame):
             if event[0] == "speech_started":
+                self._reset_unsolicited()
                 if self.state in ("thinking", "speaking"):
                     self._interrupt.set()  # vad barge-in
                 self._input_item_id = events.new_id("item")
@@ -255,7 +271,12 @@ class RealtimeSession:
         # A call the client never answered would leave a tool call without a result in
         # the served prefix; seal it so the model sees the failure instead of a broken prompt.
         self.conversation.seal_pending(NO_CLIENT_RESULT)
-        unsolicited, self._unsolicited = self._unsolicited, False
+        input_generation = self._input_generation
+        unsolicited = user_text is None and (
+            self._unsolicited or self._unsolicited_continuation == input_generation
+        )
+        self._unsolicited = False
+        self._unsolicited_continuation = None
         context = self._drain_context()
         if context:
             if unsolicited:
@@ -336,6 +357,9 @@ class RealtimeSession:
             self.conversation.add_assistant(full)
         if status == "cancelled":
             self._emit(events.item_truncated(response_id))
+        if (unsolicited and handed_to_client and status == "completed"
+                and not self._interrupt.is_set() and not self._closed.is_set()):
+            self._unsolicited_continuation = input_generation
         # Listening again BEFORE response.done goes out: the Reachy app posts the tool
         # output and response.create the moment it sees response.done, and must not be
         # told the response is still active.

@@ -651,3 +651,114 @@ def test_unsolicited_turns_are_logged(caplog):
     assert "perception wake: unsolicited turn starting" in caplog.text
     assert "chose silence" in caplog.text
     session.close()
+
+
+class QuietCameraEngine:
+    """Request client images, then return a scripted decision about speaking."""
+
+    def __init__(self, reply, looks=1):
+        self.reply = reply
+        self.looks = looks
+        self.seen = []
+
+    def respond_streaming(self, conversation, client_tools=None):
+        self.seen.append([m.to_chat() for m in conversation.history()])
+        if len(self.seen) <= self.looks:
+            call_id = f"look-{len(self.seen)}"
+            conversation.add_tool_call(None, [{"id": call_id, "type": "function", "function": {
+                "name": "camera", "arguments": '{"question": "what changed?"}'}}])
+            yield ClientToolCall(id=call_id, name="camera", arguments='{"question": "what changed?"}')
+            return
+        yield from self.reply
+
+
+@pytest.mark.parametrize("looks", [1, 2])
+@pytest.mark.parametrize("reply,expected", [
+    (("NOTHING", "_TO_SAY."), ""),
+    (("How is ", "the restoration going?"), "How is the restoration going?"),
+])
+def test_unsolicited_camera_continuation_can_stay_silent_or_speak(looks, reply, expected):
+    engine = QuietCameraEngine(reply, looks=looks)
+    tts = FakeTTS()
+    session, emitted, done = collect_session(engine=engine, tts=tts, detector=ScriptedDetector([]))
+    try:
+        session.update({"tools": [CAMERA_SPEC]})
+        session.add_context("someone entered (browser)")
+        assert session.wake()
+        wait(done)
+        for n in range(1, looks + 1):
+            done.clear()
+            session.create_item({"kind": "function_call_output", "call_id": f"look-{n}",
+                                 "output": '{"image_attached": true}'})
+            session.create_item({"kind": "message", "content": [
+                {"type": "image_url", "image_url": {"url": IMG}}]})
+            session.create_response()
+            wait(done)
+        assert "".join(tts.spoken) == expected
+        spoken_messages = [m.content for m in session.conversation.history()
+                           if m.role == "assistant" and not m.tool_calls]
+        assert spoken_messages == ([expected] if expected else [])
+        assert engine.seen[-1][-1]["content"] == [
+            {"type": "image_url", "image_url": {"url": IMG}}]
+        if not expected:
+            assert not any(e["type"] in ("response.output_text.delta", "response.audio.delta") for e in emitted)
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("new_input", ["typed", "typed_parts", "speech", "cancel"])
+def test_fresh_user_turn_does_not_inherit_unsolicited_camera_silence(new_input):
+    engine = QuietCameraEngine(("NOTHING", "_TO_SAY."))
+    tts = FakeTTS()
+    session, emitted, done = collect_session(
+        engine=engine, tts=tts, transcriber=FakeTranscriber("Say NOTHING_TO_SAY literally."),
+        detector=ScriptedDetector([[("speech_started",)], [("utterance", b"pcm")]]))
+    try:
+        session.update({"tools": [CAMERA_SPEC]})
+        session.add_context("someone entered (browser)")
+        assert session.wake()
+        wait(done)
+        done.clear()
+        if new_input == "speech":
+            session.feed_audio(FRAME)
+            session.feed_audio(FRAME)
+        elif new_input in ("typed", "typed_parts"):
+            content = "Say NOTHING_TO_SAY literally."
+            if new_input == "typed_parts":
+                content = [{"type": "text", "text": content},
+                           {"type": "image_url", "image_url": {"url": IMG}}]
+            session.create_item({"kind": "message", "content": content})
+            session.create_response()
+        else:
+            session.cancel_response()
+            session.create_item({"kind": "function_call_output", "call_id": "look-1", "output": "cancelled"})
+            session.create_response()
+        wait(done)
+        assert "".join(tts.spoken) == "NOTHING_TO_SAY."
+    finally:
+        session.close()
+
+
+def test_user_input_during_camera_handoff_takes_priority():
+    class InterruptedCameraEngine(QuietCameraEngine):
+        def respond_streaming(self, conversation, client_tools=None):
+            for delta in super().respond_streaming(conversation, client_tools=client_tools):
+                yield delta
+                if isinstance(delta, ClientToolCall):
+                    # A typed message arrives before this response finishes handing off.
+                    session.create_item({"kind": "message", "content": "Say NOTHING_TO_SAY literally."})
+
+    engine = InterruptedCameraEngine(("NOTHING_TO_SAY",))
+    tts = FakeTTS()
+    session, emitted, done = collect_session(engine=engine, tts=tts, detector=ScriptedDetector([]))
+    try:
+        session.update({"tools": [CAMERA_SPEC]})
+        session.add_context("someone entered (browser)")
+        assert session.wake()
+        wait(done)
+        done.clear()
+        session.create_response()
+        wait(done)
+        assert "".join(tts.spoken) == "NOTHING_TO_SAY"
+    finally:
+        session.close()
