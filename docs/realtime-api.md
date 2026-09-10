@@ -15,6 +15,35 @@ or `Authorization: Bearer <token>` header. Wrong/missing token → close 4001.
 Any path other than `/v1/realtime` is closed with code 4004.
 TLS mirrors the web UI: the same self-signed pair, plaintext ws:// if TLS is off.
 
+## Prepared voice cues
+
+The browser can load short, same-voice waiting cues from the web server without
+starting TTS during a conversation. Prepare the bank explicitly after configuring
+the voice:
+
+    python -m richard.realtime.cues prepare
+    python -m richard.realtime.cues prepare --config /path/to/config.toml
+
+The cache is stored in `realtime-cues/` beside the selected config file (normally
+`~/.richard/realtime-cues/`), never in the repository. Preparation uses the
+configured TTS engine, voice, language controls, and voice effect. It is idempotent
+while that complete bank still matches the configuration. Use `--force` after
+replacing a voice sample under the same voice identifier.
+
+`voice.language = "it"` or `"Italian"` selects the Italian catalog. `"en"`,
+`"English"`, `"auto"`, or an empty setting selects English. An unsupported explicit
+language prepares no clips, so Richard remains silent rather than speaking a
+different language.
+
+The web server exposes the current bank through read-only HTTP:
+
+    GET /api/realtime/cues
+
+The response is `{fingerprint, language, clips}`. Each clip has `id`, `phase`,
+`text`, base64 PCM16 `audio`, and `sample_rate`. A missing, corrupt, incomplete, or
+wrong-voice bank returns the current fingerprint and language with `clips: []`.
+The endpoint never synthesizes audio or starts a background preparation job.
+
 ## Audio formats
 
 - **Input:** PCM16, mono, 16 kHz, base64-encoded in `input_audio_buffer.append`.

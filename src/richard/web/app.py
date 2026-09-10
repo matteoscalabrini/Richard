@@ -40,6 +40,7 @@ from richard.errors import BrainRejectedInput, BrainUnreachable, HomeAssistantEr
 from richard.plugins.home_assistant.client import HomeAssistantClient
 from richard.memory import MemoryStore
 from richard.persona import BASE_CHARACTER
+from richard.realtime.cues import read_cues
 from richard.satellite.relays import RelayRegistry
 from richard.voice.effects import EFFECTS
 from richard.voice.voices import VoiceLibrary
@@ -545,6 +546,8 @@ class WebApp:
             return self._status()
         if method == "GET" and path == "/api/config":
             return self._get_config()
+        if method == "GET" and path == "/api/realtime/cues":
+            return self._realtime_cues()
         if method == "PUT" and path == "/api/config":
             return self._put_config(body)
         if method == "GET" and path == "/api/home-assistant":
@@ -708,6 +711,11 @@ class WebApp:
         # read-only: lets the UI show the built-in base as the prompt placeholder
         payload["prompt_default"] = BASE_CHARACTER
         return Response.json(payload)
+
+    def _realtime_cues(self) -> Response:
+        config = self._load(self._config_path)
+        directory = Path(self._config_path).parent / "realtime-cues"
+        return Response.json(read_cues(config, directory))
 
     # --- voice library (remote TTS server) ---
 
