@@ -54,7 +54,7 @@ perception = "richard.plugins.perception:PerceptionPlugin"
 where = ["src"]
 
 [tool.setuptools.package-data]
-"richard.web" = ["*.png"]
+"richard.web" = ["*.png", "*.js"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src", "."]

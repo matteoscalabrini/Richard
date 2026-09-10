@@ -44,6 +44,16 @@ The response is `{fingerprint, language, clips}`. Each clip has `id`, `phase`,
 wrong-voice bank returns the current fingerprint and language with `clips: []`.
 The endpoint never synthesizes audio or starts a background preparation job.
 
+The web voice client decodes this bank before a turn begins and uses each clip at
+its stored sample rate. During a solicited turn it may play one prepared cue after
+1.2 seconds without audible output. A turn gets at most two cues, cues are at least
+eight seconds apart across the page session, and the same variant is not selected
+twice in a row. Speech, answer audio, errors, cancellation, and disconnection stop
+or suppress a waiting cue. These sounds are playback only: their text is never put
+in the conversation, page history, or memory. The bank is fetched again for each
+new voice session and after voice settings are saved; an absent or changed bank
+therefore degrades to silence, with no browser speech-synthesis fallback.
+
 ## Audio formats
 
 - **Input:** PCM16, mono, 16 kHz, base64-encoded in `input_audio_buffer.append`.
@@ -117,6 +127,15 @@ A browser may bind its websocket and frame stream with one source identifier:
 Source IDs are 1–64 characters: letters, digits, `.`, `_`, `:`, and `-`, beginning
 with a letter or digit. The same value is sent as `source` to
 `POST /api/perception/frame`. Invalid values are rejected rather than truncated.
+
+The web page creates one source ID for its lifetime and uses one camera track for
+both ambient perception and hands-free voice. Microphone and camera lifetimes stay
+independent: turning voice off does not stop a camera still owned by ambient
+perception, and denied camera permission still leaves voice available. Only one
+frame upload can be outstanding. A realtime session requests a newly captured
+frame after any current upload drains, and hidden pages release ambient ownership.
+Browser frames are bounded to an 800-pixel long edge for ambient/current-turn
+vision; the explicit client `camera` tool may use 1600 pixels only for `detail=high`.
 
 For a bound visual session, perception context routes only from that source. A
 gated `scene_changed` event is an opportunity for one coalesced unsolicited turn;

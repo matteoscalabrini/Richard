@@ -23,6 +23,7 @@ from collections import Counter
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import date
+from importlib import resources
 from pathlib import Path
 from typing import Callable
 
@@ -54,6 +55,7 @@ BRAIN_DOWN_LINE = "I can't reach my brain right now."
 IMAGE_REJECTED_LINE = "I couldn't take that picture in."
 
 _ICON_PATH = Path(__file__).with_name("icon.png")
+_REALTIME_CLIENT = resources.files("richard.web").joinpath("realtime_client.js")
 
 
 @dataclass
@@ -541,6 +543,8 @@ class WebApp:
         # Static SPA
         if method == "GET" and path in ("/", "/index.html"):
             return Response.html(SPA_HTML)
+        if method == "GET" and path == "/realtime-client.js":
+            return self._realtime_client()
         if method == "GET" and path == "/icon":
             return self._icon()
         if method == "GET" and path == "/api/status":
@@ -829,6 +833,17 @@ class WebApp:
     def _icon(self) -> Response:
         try:
             return Response(200, _ICON_PATH.read_bytes(), "image/png")
+        except OSError:
+            return Response.not_found()
+
+    def _realtime_client(self) -> Response:
+        try:
+            return Response(
+                200,
+                _REALTIME_CLIENT.read_bytes(),
+                "text/javascript; charset=utf-8",
+                {"Cache-Control": "no-store"},
+            )
         except OSError:
             return Response.not_found()
 

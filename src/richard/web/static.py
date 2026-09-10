@@ -939,6 +939,7 @@ SPA_HTML = r"""<!DOCTYPE html>
   </footer>
 </div>
 
+<script src="/realtime-client.js"></script>
 <script>
 const FIELDS = [
   {id:'llm_endpoint', path:['llm_endpoint'], t:'url', sec:'brain', req:true},
@@ -993,6 +994,8 @@ const FIELDS = [
 const BY_ID = Object.fromEntries(FIELDS.map(f => [f.id, f]));
 const SAVABLE = ['brain','personality','voice-stt','voice-tts','voice-effect','voice-turn','voice-mic','home-assistant','relay','web','realtime'];
 let baseline = {};
+const {RealtimePresenceController, SharedCamera, FrameUploader, createBrowserSourceId} = RichardRealtimeClient;
+const pageSourceId = createBrowserSourceId(typeof crypto === 'undefined' ? null : crypto);
 
 const $ = id => document.getElementById(id);
 function getPath(o, p){ return p.reduce((a,k) => (a == null ? a : a[k]), o); }
@@ -1103,6 +1106,7 @@ async function saveSection(sec){
   try {
     const data = await sendJSON('/api/config', 'PUT', patch);
     applyConfig(data.config);
+    if (sec.startsWith('voice-')) await refreshCueBank();
     const saved = 'saved ' + data.changed.length + ' field' + (data.changed.length === 1 ? '' : 's') + ' · ' + hm();
     if (sec === 'home-assistant') await refreshHomeAssistant(saved);
     else setStatus(sec, saved, 'ok');
@@ -1447,6 +1451,7 @@ async function refreshAll(){
     applyConfig(cfg);
     renderMemories(memories.memories);
     try { await loadVoices(); } catch (e) {}
+    try { await refreshCueBank(); } catch (e) {}
     try { await loadPlugins(); } catch (e) {}
     try { await syncPerceptionStream(); } catch (e) {}
     try { await refreshHomeAssistant(); } catch (e) {}
@@ -1523,6 +1528,17 @@ async function sendChat(){
     ? (text ? [{type: 'text', text}, {type: 'image_url', image_url: {url: image.url}}] : [{type: 'image_url', image_url: {url: image.url}}])
     : text;
   chatHistory.push({role: 'user', content}); renderChatHistory();
+  if (rt && rt.ws.readyState === 1) {
+    rtFlushPlayback();
+    rt.presence.speechStarted();
+    const realtimeContent = [];
+    if (text) realtimeContent.push({type: 'input_text', text});
+    if (image) realtimeContent.push({type: 'input_image', image_url: image.url});
+    rtSend({type: 'conversation.item.create', item: {type: 'message', role: 'user', content: realtimeContent}});
+    rtSend({type: 'response.create'});
+    setEntityState('thinking'); setLatestReply('', 'streaming'); setStatus('chat', 'thinking…', '');
+    return;
+  }
   $('chat-send').disabled = true; $('chat-mic').disabled = true;
   setEntityState('thinking'); setLatestReply('', 'streaming'); setStatus('chat', 'thinking…', '');
   let reply = '';
@@ -1577,8 +1593,53 @@ class Pcm16Capture extends AudioWorkletProcessor {
 registerProcessor('pcm16-capture', Pcm16Capture);
 `;
 
-let rt = null;  // {ws, ctx, stream, node, playhead, sources, outRate, userLine, replyLine}
+let preparedCueBank = {fingerprint: null, clips: []};
+let cueBankRequest = 0;
+function decodePreparedPcm(audio){
+  const pcm = rtPcmFromB64(audio); const decoded = new Float32Array(pcm.length);
+  for (let i = 0; i < pcm.length; i++) decoded[i] = pcm[i] / 32768;
+  return decoded;
+}
+async function refreshCueBank(){
+  const request = ++cueBankRequest;
+  let next = {fingerprint: null, clips: []};
+  try {
+    const data = await getJSON('/api/realtime/cues');
+    next = {fingerprint: data.fingerprint || null, clips: (data.clips || []).map(clip => ({
+      id: clip.id, phase: clip.phase, sampleRate: clip.sample_rate, decoded: decodePreparedPcm(clip.audio),
+    }))};
+  } catch (_) {}
+  if (request !== cueBankRequest) return preparedCueBank;
+  preparedCueBank = next;
+  if (rt && rt.presence) rt.presence.setBank(next);
+  return next;
+}
+
+function makeCameraVideo(stream){
+  const video = document.createElement('video');
+  video.muted = true; video.playsInline = true; video.autoplay = true; video.hidden = true;
+  video.srcObject = stream; document.body.appendChild(video);
+  return video;
+}
+const sharedCamera = new SharedCamera({
+  getUserMedia: constraints => navigator.mediaDevices.getUserMedia(constraints),
+  makeVideo: makeCameraVideo,
+});
+function captureSharedFrame(maxEdge, quality){
+  const media = sharedCamera.media(); const video = media && media.video;
+  if (!video || !video.videoWidth || !media.track || media.track.readyState === 'ended') return null;
+  return frameFromCanvasSource(video, video.videoWidth, video.videoHeight, maxEdge, quality);
+}
+const presenceUploader = new FrameUploader({
+  sourceId: pageSourceId,
+  capture: () => { const shot = captureSharedFrame(800, 0.7); return shot && shot.url.split(',')[1]; },
+  upload: (source, image_base64) => sendJSON('/api/perception/frame', 'POST', {source, image_base64}),
+  onError: e => setStatus('perception', 'stream: ' + e.message, 'err'),
+});
+
+let rt = null;  // {ws, ctx, micStream, node, sources, outRate, userLine, replyLine, presence}
 let rtStarting = false;
+let rtStartGeneration = 0;
 
 // The same tool the Reachy Conversation App offers on the robot, so this page exercises
 // the robot's protocol path end to end: the brain decides to look, we take the frame.
@@ -1598,8 +1659,7 @@ function rtAnswerCall(call){
   }
   let detail = 'low';
   try { detail = JSON.parse(call.args || '{}').detail === 'high' ? 'high' : 'low'; } catch (_) {}
-  const v = rt.video;
-  const shot = v ? frameFromCanvasSource(v, v.videoWidth, v.videoHeight, detail === 'high' ? 1600 : 800) : null;
+  const shot = captureSharedFrame(detail === 'high' ? 1600 : 800, 0.85);
   if (!shot){
     rtSend({type: 'conversation.item.create', item: {type: 'function_call_output', call_id: call.id, output: JSON.stringify({error: 'No frame available'})}});
     rtSend({type: 'response.create'}); return;
@@ -1623,7 +1683,25 @@ function rtPcmFromB64(b64){
   return out;
 }
 
-function rtPlay(b64){
+function rtPlayPreparedCue(clip, onEnded){
+  if (!rt) return null;
+  const buf = rt.ctx.createBuffer(1, clip.decoded.length, clip.sampleRate);
+  buf.getChannelData(0).set(clip.decoded);
+  const src = rt.ctx.createBufferSource(); const gain = rt.ctx.createGain();
+  src.buffer = buf; src.connect(gain); gain.connect(rt.ctx.destination);
+  src.onended = onEnded;
+  src.start(rt.ctx.currentTime + 0.01);
+  return {source: src, gain, stop(){
+    const now = rt ? rt.ctx.currentTime : 0;
+    try {
+      gain.gain.cancelScheduledValues(now); gain.gain.setValueAtTime(gain.gain.value, now);
+      gain.gain.linearRampToValueAtTime(0, now + 0.04); src.stop(now + 0.05);
+    } catch (_) { try { src.stop(); } catch (_) {} }
+  }};
+}
+
+function rtPlay(b64, responseId){
+  if (!rt || !rt.presence.realAudioScheduled(responseId)) return;
   const pcm = rtPcmFromB64(b64);
   const buf = rt.ctx.createBuffer(1, pcm.length, rt.outRate);
   const ch = buf.getChannelData(0);
@@ -1631,21 +1709,36 @@ function rtPlay(b64){
   const src = rt.ctx.createBufferSource();
   src.buffer = buf; src.connect(rt.ctx.destination);
   const t = Math.max(rt.ctx.currentTime + 0.05, rt.playhead);
-  src.start(t); rt.playhead = t + buf.duration; rt.sources.push(src);
+  const entry = {source: src, responseId};
+  src.onended = () => {
+    if (!rt) return;
+    const index = rt.sources.indexOf(entry); if (index >= 0) rt.sources.splice(index, 1);
+    rt.presence.realAudioEnded(responseId);
+  };
+  src.start(t); rt.playhead = t + buf.duration; rt.sources.push(entry);
 }
 
-function rtFlushPlayback(){
-  rt.sources.forEach(s => { try { s.stop(); } catch (_) {} });
-  rt.sources = []; rt.playhead = 0;
+function rtFlushPlayback(state){
+  const current = state || rt; if (!current) return;
+  const responseIds = new Set(current.sources.map(entry => entry.responseId));
+  current.sources.forEach(entry => { entry.source.onended = null; try { entry.source.stop(); } catch (_) {} });
+  current.sources = []; current.playhead = 0;
+  responseIds.forEach(responseId => current.presence.realAudioFlushed(responseId));
 }
 
 function rtHandle(msg){
   switch (msg.type){
     case 'session.created':
       rt.outRate = msg.session.output_audio_samplerate;
-      if (rt.video) rtSend({type: 'session.update', session: {tools: [CAMERA_TOOL]}});
+      rtSend({type: 'session.update', session: {
+        tools: rt.video ? [CAMERA_TOOL] : [], source_id: pageSourceId,
+        playback_ack: true, visual_context: !!rt.video,
+      }});
+      if (rt.video) presenceUploader.requestFresh().catch(e => setStatus('perception', 'stream: ' + e.message, 'err'));
       break;
+    case 'response.activity': rt.presence.activity(msg); break;
     case 'response.function_call_arguments.done':
+      if (!rt.presence.accepts(msg.response_id)) break;
       rt.pendingCall = (msg.name === 'camera' && rt.video)
         ? {id: msg.call_id, args: msg.arguments}
         : {id: msg.call_id, error: 'unknown tool ' + msg.name};
@@ -1656,7 +1749,8 @@ function rtHandle(msg){
       // ("listening") while seconds of audio are still queued here — truncated
       // never arrives for a completed response. The client owns playback, so
       // speech onset must flush the queue locally, whatever the server state.
-      if (rt.playhead > rt.ctx.currentTime) rtFlushPlayback();
+      rt.presence.speechStarted();
+      if (rt.sources.length) rtFlushPlayback();
       setEntityState('listening'); setStatus('chat', 'listening…', ''); rt.userLine = '';
       break;
     case 'conversation.item.input_audio_transcription.delta': setStatus('chat', '“' + msg.delta + '”', ''); break;
@@ -1664,21 +1758,32 @@ function rtHandle(msg){
       rt.userLine = msg.transcript;
       chatHistory.push({role: 'user', content: msg.transcript}); renderChatHistory();
       break;
-    case 'response.created': setEntityState('thinking'); setStatus('chat', 'thinking…', ''); rt.replyLine = ''; break;
-    case 'response.output_text.delta': rt.replyLine += msg.delta; break;
-    case 'response.audio.delta': setEntityState('speaking'); setStatus('chat', 'speaking…', ''); rtPlay(msg.delta); break;
-    case 'conversation.item.truncated': rtFlushPlayback(); break;
+    case 'response.created':
+      rt.presence.responseCreated(msg.response);
+      setEntityState('thinking'); setStatus('chat', 'thinking…', ''); rt.replyLine = '';
+      break;
+    case 'response.output_text.delta': if (rt.presence.accepts(msg.response_id)) rt.replyLine += msg.delta; break;
+    case 'response.audio.delta':
+      if (!rt.presence.accepts(msg.response_id)) break;
+      setEntityState('speaking'); setStatus('chat', 'speaking…', ''); rtPlay(msg.delta, msg.response_id);
+      break;
+    case 'conversation.item.truncated':
+      if (!rt.presence.accepts(msg.item_id)) break;
+      rtFlushPlayback(); rt.presence.responseDone({id: msg.item_id, status: 'cancelled'});
+      break;
     case 'response.done':
+      if (!rt.presence.responseDone(msg.response)) break;
       if (rt.replyLine){ chatHistory.push({role: 'assistant', content: rt.replyLine}); renderChatHistory(); setLatestReply(rt.replyLine); }
       if (rt.pendingCall){ const call = rt.pendingCall; rt.pendingCall = null; rtAnswerCall(call); break; }
       setEntityState('ready'); setStatus('chat', '', '');
       break;
-    case 'error': setStatus('chat', 'voice: ' + msg.error.message, 'err'); break;
+    case 'error': rt.presence.protocolError(msg.response_id); setStatus('chat', 'voice: ' + msg.error.message, 'err'); break;
   }
 }
 
 async function startVoiceMode(){
   if (rt || rtStarting) return;
+  const generation = ++rtStartGeneration;
   rtStarting = true; $('voice-mode').disabled = true;
   try {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
@@ -1688,9 +1793,10 @@ async function startVoiceMode(){
     try { cfg = await getJSON('/api/config'); }
     catch (e) { setStatus('chat', 'config unavailable: ' + e.message, 'err'); return; }
     if (!cfg.realtime || !cfg.realtime.enabled){ setStatus('chat', 'realtime API disabled in config', 'err'); return; }
+    await refreshCueBank();
     const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
     const tok = cfg.realtime.token ? ('?token=' + encodeURIComponent(cfg.realtime.token)) : '';
-    let ws, stream, ctx, wsFailedEarly = false, preMsgs = [];
+    let ws, micStream, cameraMedia, ctx, wsFailedEarly = false, preMsgs = [];
     try {
       ws = new WebSocket(scheme + '://' + location.hostname + ':' + cfg.realtime.port + '/v1/realtime' + tok);
       // Buffer messages until the operational handler is attached below — the
@@ -1700,21 +1806,21 @@ async function startVoiceMode(){
       ws.onerror = () => { wsFailedEarly = true; setStatus('chat', 'voice connection failed', 'err'); };
       ws.onclose = () => { wsFailedEarly = true; setStatus('chat', 'voice connection closed — check realtime server/token', 'err'); };
       const audioSpec = {echoCancellation: true, noiseSuppression: true, channelCount: 1};
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({audio: audioSpec, video: {width: {ideal: 1920}, height: {ideal: 1080}, facingMode: 'user'}});
-      } catch (_) {
-        stream = await navigator.mediaDevices.getUserMedia({audio: audioSpec});  // no camera: voice only
-      }
+      const camera = sharedCamera.acquire('voice').catch(() => null);
+      micStream = await navigator.mediaDevices.getUserMedia({audio: audioSpec});
+      cameraMedia = await camera;
       ctx = new AudioContext();
       await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([RT_WORKLET], {type: 'text/javascript'})));
     } catch (e) {
       if (ws) { try { ws.onclose = null; ws.close(); } catch (_) {} }
-      if (stream) stream.getTracks().forEach(t => t.stop());
+      if (micStream) micStream.getTracks().forEach(t => t.stop());
+      sharedCamera.release('voice');
       if (ctx) ctx.close().catch(() => {});
       setStatus('chat', 'mic blocked: ' + e.message, 'err'); return;
     }
-    if (wsFailedEarly || ws.readyState > 1) {
-      stream.getTracks().forEach(t => t.stop());
+    if (generation !== rtStartGeneration || wsFailedEarly || ws.readyState > 1) {
+      micStream.getTracks().forEach(t => t.stop());
+      sharedCamera.release('voice');
       ctx.close().catch(() => {});
       return;
     }
@@ -1722,17 +1828,15 @@ async function startVoiceMode(){
     node.port.onmessage = e => {
       if (ws.readyState === 1) ws.send(JSON.stringify({type: 'input_audio_buffer.append', audio: rtB64FromBuffer(e.data)}));
     };
-    ctx.createMediaStreamSource(stream).connect(node);
-    rt = {ws, ctx, stream, node, playhead: 0, sources: [], outRate: 24000, userLine: '', replyLine: ''};
-    rt.pendingCall = null; rt.video = null;
-    if (stream.getVideoTracks().length){
-      const v = document.createElement('video');
-      v.muted = true; v.playsInline = true; v.autoplay = true; v.hidden = true;
-      v.srcObject = new MediaStream(stream.getVideoTracks());
-      document.body.appendChild(v);
-      try { await v.play(); } catch (_) {}
-      rt.video = v;
-    }
+    ctx.createMediaStreamSource(micStream).connect(node);
+    rt = {ws, ctx, micStream, node, playhead: 0, sources: [], outRate: 24000, userLine: '', replyLine: ''};
+    rt.pendingCall = null; rt.video = cameraMedia && cameraMedia.video;
+    rt.presence = new RealtimePresenceController({
+      send: rtSend,
+      playClip: rtPlayPreparedCue,
+      stopClip: handle => { if (handle) handle.stop(); },
+    });
+    rt.presence.setBank(preparedCueBank);
     ws.onclose = () => stopVoiceMode();
     ws.onerror = () => setStatus('chat', 'voice connection failed', 'err');
     ws.onmessage = e => { try { rtHandle(JSON.parse(e.data)); } catch (_) {} };
@@ -1746,11 +1850,14 @@ async function startVoiceMode(){
 }
 
 function stopVoiceMode(){
-  if (!rt) return;
-  const r = rt; rt = null;
+  ++rtStartGeneration;
+  sharedCamera.release('voice');
+  if (!rt) { rtStarting = false; $('voice-mode').disabled = false; return; }
+  const r = rt;
+  rtFlushPlayback(r); r.presence.disconnect();
+  rt = null;
   try { r.ws.onclose = null; r.ws.close(); } catch (_) {}
-  r.stream.getTracks().forEach(t => t.stop());
-  if (r.video) r.video.remove();
+  r.micStream.getTracks().forEach(t => t.stop());
   r.ctx.close().catch(() => {});
   $('voice-mode').classList.remove('recording');
   setEntityState('ready'); setStatus('chat', '', '');
@@ -1812,35 +1919,37 @@ async function onRecordingStop(){
 }
 
 /* ---- ambient perception: this device's camera as a frame source, and the page ---- */
-const perception = {video: null, stream: null, timer: null, enabled: false, fps: 2, poll: null};
+const perception = {video: null, timer: null, enabled: false, fps: 2, poll: null, starting: null, generation: 0};
 async function startPerceptionStream(){
-  if (perception.timer || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+  if (perception.timer || perception.starting || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return perception.starting;
+  const generation = ++perception.generation;
+  perception.starting = sharedCamera.acquire('ambient');
+  let media;
   try {
-    perception.stream = await navigator.mediaDevices.getUserMedia({video: {width: {ideal: 1280}, height: {ideal: 720}, facingMode: 'user'}});
-  } catch (e) { setStatus('perception', 'camera blocked: ' + e.message, 'err'); return; }
-  const v = document.createElement('video');
-  v.muted = true; v.playsInline = true; v.autoplay = true; v.hidden = true;
-  v.srcObject = perception.stream; document.body.appendChild(v);
-  try { await v.play(); } catch (_) {}
-  perception.video = v;
+    media = await perception.starting;
+  } catch (e) {
+    if (generation === perception.generation) setStatus('perception', 'camera blocked: ' + e.message, 'err');
+    return;
+  } finally {
+    if (generation === perception.generation) perception.starting = null;
+  }
+  if (generation !== perception.generation || !media) return;
+  perception.video = media.video;
   $('perception-indicator').hidden = false;
-  perception.timer = setInterval(async () => {
-    if (!perception.video || !perception.video.videoWidth) return;
-    const shot = frameFromCanvasSource(perception.video, perception.video.videoWidth, perception.video.videoHeight, 800, 0.7);
-    if (!shot) return;
-    try { await sendJSON('/api/perception/frame', 'POST', {source: 'browser', image_base64: shot.url.split(',')[1]}); }
-    catch (e) { setStatus('perception', 'stream: ' + e.message, 'err'); }
+  presenceUploader.request().catch(e => setStatus('perception', 'stream: ' + e.message, 'err'));
+  perception.timer = setInterval(() => {
+    presenceUploader.request().catch(e => setStatus('perception', 'stream: ' + e.message, 'err'));
   }, Math.max(100, 1000 / perception.fps));
 }
 function stopPerceptionStream(){
+  ++perception.generation; perception.starting = null;
   if (perception.timer) { clearInterval(perception.timer); perception.timer = null; }
-  if (perception.stream) { perception.stream.getTracks().forEach(t => t.stop()); perception.stream = null; }
-  if (perception.video) { perception.video.remove(); perception.video = null; }
+  perception.video = null;
+  sharedCamera.release('ambient');
   $('perception-indicator').hidden = true;
 }
 function capturePerceptionFrame(maxEdge){
-  const v = perception.video || (rt && rt.video);
-  return v && v.videoWidth ? frameFromCanvasSource(v, v.videoWidth, v.videoHeight, maxEdge, 0.85) : null;
+  return captureSharedFrame(maxEdge, 0.85);
 }
 async function syncPerceptionStream(){
   let status;
@@ -1851,6 +1960,9 @@ async function syncPerceptionStream(){
   return status;
 }
 document.addEventListener('visibilitychange', () => { syncPerceptionStream(); });
+window.addEventListener('pagehide', () => {
+  presenceUploader.cancelPendingFresh(); stopVoiceMode(); stopPerceptionStream();
+});
 
 function renderPerceptionEvents(rows){
   const box = $('perception-events');
