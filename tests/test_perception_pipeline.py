@@ -1,4 +1,5 @@
 import io
+import time
 
 import numpy as np
 import pytest
@@ -9,6 +10,7 @@ from PIL import Image  # noqa: E402
 from richard.perception.detect import Detection  # noqa: E402
 from richard.perception.faces import FaceMatch  # noqa: E402
 from richard.perception.pipeline import PerceptionService, Settings  # noqa: E402
+from richard.perception.frames import PushFrameSource  # noqa: E402
 
 
 def _jpeg(color, w=64, h=36):
@@ -103,6 +105,25 @@ def test_context_sink_takes_events_instead_of_loop_sinks(tmp_path):
     stop()
 
 
+def test_context_sink_receives_source_and_kind_for_routing(tmp_path):
+    clock = Clock()
+    settings = Settings.from_table({"enter_debounce_s": 0.0, "cooldown_s": 0.0})
+    svc = PerceptionService(
+        settings, data_dir=tmp_path, clock=clock, person_detector=ScriptedPersons([PERSON])
+    )
+    offered = []
+    svc.set_context_sink(
+        lambda line, wake=False, source_id=None, kind=None: offered.append(
+            (line, wake, source_id, kind)
+        ) or True
+    )
+    svc.push_frame("browser-alpha", _jpeg((0, 0, 0)))
+    svc.process("browser-alpha")
+    assert offered == [
+        ("someone entered (browser-alpha)", True, "browser-alpha", "person_entered")
+    ]
+
+
 def test_snapshot_detail_and_region(tmp_path):
     svc = PerceptionService(Settings.from_table({}), data_dir=tmp_path, person_detector=ScriptedPersons([[]]))
     assert svc.snapshot() is None
@@ -117,6 +138,23 @@ def test_snapshot_detail_and_region(tmp_path):
         svc.snapshot(region="nowhere")
 
 
+def test_snapshot_reports_capture_age_and_never_falls_back_for_explicit_source(tmp_path):
+    clock = Clock()
+    svc = PerceptionService(
+        Settings.from_table({"stale_s": 5}),
+        data_dir=tmp_path,
+        clock=clock,
+        person_detector=ScriptedPersons([[]]),
+    )
+    svc.push_frame("browser-alpha", _jpeg((1, 2, 3)))
+    clock.t += 0.75
+    _, meta = svc.snapshot("browser-alpha", detail="low")
+    assert meta["source"] == "browser-alpha" and meta["age_s"] == pytest.approx(0.75)
+    svc.push_frame("browser-beta", _jpeg((4, 5, 6)))
+    clock.t += 5.5
+    assert svc.snapshot("browser-alpha", detail="low") is None
+
+
 def test_status_reports_sources_and_staleness(tmp_path):
     clock = Clock()
     svc = PerceptionService(Settings.from_table({"stale_s": 5}), data_dir=tmp_path, clock=clock, person_detector=ScriptedPersons([[]]))
@@ -126,6 +164,67 @@ def test_status_reports_sources_and_staleness(tmp_path):
     clock.t += 10
     assert svc.status()["sources"][0]["stale"] is True
     assert svc.live_sources() == []
+
+
+def test_stale_sources_do_not_claim_current_presence(tmp_path):
+    clock = Clock()
+    svc = PerceptionService(
+        Settings.from_table({"stale_s": 5, "enter_debounce_s": 0.0, "cooldown_s": 0.0}),
+        data_dir=tmp_path,
+        clock=clock,
+        person_detector=ScriptedPersons([PERSON]),
+    )
+    svc.push_frame("browser-alpha", _jpeg((0, 0, 0)))
+    svc.process("browser-alpha")
+    assert svc.presence() == [{"source": "browser-alpha", "subject": "unknown", "since": 1000.0}]
+    clock.t += 6
+    assert svc.presence() == []
+
+
+def test_expired_push_sources_release_pipeline_frames_and_worker_but_not_external_sources(tmp_path):
+    clock = Clock()
+    svc = PerceptionService(
+        Settings.from_table({"stale_s": 5, "stream_fps": 50}),
+        data_dir=tmp_path,
+        clock=clock,
+        person_detector=ScriptedPersons([[]]),
+    )
+    external = PushFrameSource("sdk-camera", clock=clock)
+    external.push_jpeg(_jpeg((9, 9, 9)))
+    svc.hub.add(external)  # registered outside push_frame: service must not evict it
+    svc.start()
+    try:
+        svc.push_frame("browser-old", _jpeg((1, 1, 1)))
+        deadline = time.monotonic() + 2
+        while "browser-old" not in svc._threads and time.monotonic() < deadline:
+            time.sleep(0.001)
+        old_worker = svc._threads["browser-old"]
+        clock.t += 31
+        svc.push_frame("browser-new", _jpeg((2, 2, 2)))
+        old_worker.join(2)
+        assert not old_worker.is_alive()
+        assert "browser-old" not in svc.hub.sources()
+        assert "browser-old" not in svc._pipelines
+        assert "browser-old" not in svc._threads
+        assert "browser-old" not in svc._frames_received
+        assert "sdk-camera" in svc.hub.sources()
+    finally:
+        svc.stop()
+
+
+def test_invalid_first_frame_does_not_retain_a_push_source_or_worker(tmp_path):
+    svc = PerceptionService(
+        Settings.from_table({}), data_dir=tmp_path, person_detector=ScriptedPersons([[]])
+    )
+    svc.start()
+    try:
+        with pytest.raises(ValueError, match="decodable image"):
+            svc.push_frame("browser-invalid", b"not an image")
+        assert "browser-invalid" not in svc.hub.sources()
+        assert "browser-invalid" not in svc._pipelines
+        assert "browser-invalid" not in svc._threads
+    finally:
+        svc.stop()
 
 
 def test_enrol_uses_the_identifier_and_the_gallery(tmp_path):

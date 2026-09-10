@@ -59,7 +59,8 @@ The endpoint never synthesizes audio or starts a background preparation job.
 | `conversation.item.create` | `item`: `{type:"message", role:"user", content:[{type:"input_text",text} \| {type:"input_image",image_url}]}` or `{type:"function_call_output", call_id, output}` | append to the conversation; **no turn starts** |
 | `response.create` | — | run a turn on the conversation as it stands; `error` with code `conversation_already_has_active_response` while a response is active; an empty response (`response.created` then `response.done`) when nothing is new |
 | `response.cancel` | — | stop the in-flight response |
-| `session.update` | `session.barge_in`: `"vad"\|"wake"\|"off"`; `session.tools`: flat function specs `{type:"function", name, description, parameters}` | change turn policy; register client-side tools (names owned by Richard's providers are dropped and listed in `session.updated.dropped_tools`); other keys are ignored |
+| `session.update` | `session.barge_in`: `"vad"\|"wake"\|"off"`; `session.tools`: flat function specs `{type:"function", name, description, parameters}`; optional `source_id`, `playback_ack`, `visual_context` | change turn policy and negotiate additive browser capabilities; `session.updated` echoes the effective values; names owned by Richard's providers are dropped and listed in `dropped_tools` |
+| `playback.update` | `response_id`, `playing`: boolean | acknowledge playback for a known response; `false` means every queued audio chunk for that response was drained or stopped |
 
 ## Server → client events
 
@@ -69,7 +70,8 @@ The endpoint never synthesizes audio or starts a background preparation job.
 | `input_audio_buffer.speech_started` / `speech_stopped` | VAD boundary (UI: listening state) |
 | `conversation.item.input_audio_transcription.delta` | **full partial transcript so far** (replace, not append — deviation from OpenAI) |
 | `conversation.item.input_audio_transcription.completed` | final transcript of the user turn |
-| `response.created` | Richard started thinking |
+| `response.created` | Richard started a response; active turns include `response: {id, turn_id, unsolicited}` |
+| `response.activity` | factual processing state: `{response_id, turn_id, phase, unsolicited}` where phase is `thinking`, `tool`, `vision`, `answer`, or `error` |
 | `response.output_text.delta` | reply text as it streams |
 | `response.audio.delta` | base64 PCM16 chunk of speech |
 | `response.function_call_arguments.done` | `call_id`, `name`, `arguments` (JSON string): the brain called one of the client's tools; run it, post `function_call_output` (and for a camera, an `input_image` message), then `response.create`. Followed by `response.done`. |
@@ -87,6 +89,48 @@ Richard talks cancels his reply (`conversation.item.truncated` + `response.done`
 status `cancelled`) — use client echo cancellation. `"off"`: Richard is deaf
 until `response.done`. `"wake"`: reserved for the Phase 2 wake-word stage;
 currently behaves like `"off"`.
+
+Clients that negotiate `playback_ack: true` own the playback boundary after the
+first `response.audio.delta`. Richard does not start unsolicited speech until the
+matching response receives `playback.update` with `playing: false`, or user speech
+interrupts it. A stale or unknown response ID cannot release newer playback. Legacy
+clients that omit the capability retain the `response.done` idle behavior.
+
+`turn_id` identifies one logical user turn. It remains stable across client-tool
+results and their following `response.create`, while fresh typed input, speech, or a
+perception wake starts a new ID. Activity is emitted before blocking brain/tool work.
+The `answer` phase means synthesized response audio is available; it is immediately
+followed by that response's audio delta. `tool` reports execution only and makes no
+success claim.
+
+```json
+{"type":"response.created","response":{"id":"resp_1","turn_id":"turn_1","unsolicited":false}}
+{"type":"response.activity","response_id":"resp_1","turn_id":"turn_1","phase":"thinking","unsolicited":false}
+```
+
+## Browser visual context
+
+A browser may bind its websocket and frame stream with one source identifier:
+
+    {"type":"session.update","session":{"source_id":"browser-UUID","playback_ack":true,"visual_context":true}}
+
+Source IDs are 1–64 characters: letters, digits, `.`, `_`, `:`, and `-`, beginning
+with a letter or digit. The same value is sent as `source` to
+`POST /api/perception/frame`. Invalid values are rejected rather than truncated.
+
+For a bound visual session, perception context routes only from that source. A
+gated `scene_changed` event is an opportunity for one coalesced unsolicited turn;
+it does not cause continuous model calls and it waits while the user speaks, a
+response runs, or acknowledged audio remains queued. Unbound clients retain the
+legacy all-source context behavior and scene changes do not wake them.
+
+At each eligible turn the server may add one fresh low-detail frame from the bound
+source, with capture age and an instruction to use the evidence for the active
+conversation or action and describe the scene only if the user requested it. This is
+replaceable working context outside persistent conversation history. A stale or
+missing frame clears it. Intentional user and tool images remain in history. Push
+sources inactive for more than `max(30 seconds, 4 × stale_s)` are removed with their
+pipeline worker; a later frame re-registers the source.
 
 ## Client-side tools and pictures (the Reachy app's `camera`)
 

@@ -48,6 +48,23 @@ def test_camera_execute_returns_the_frame_as_a_tool_result():
     assert svc.calls == [(None, "high", "left")]
 
 
+def test_camera_clone_has_independent_source_binding():
+    svc = FakeService(live=("browser-alpha", "browser-beta"))
+    shared = CameraProvider(svc)
+    alpha = shared.clone()
+    beta = shared.clone()
+    alpha.bind_source("browser-alpha")
+    beta.bind_source("browser-beta")
+    alpha.execute("camera", {"question": "what"})
+    beta.execute("camera", {"question": "what"})
+    shared.execute("camera", {"question": "what"})
+    assert svc.calls == [
+        ("browser-alpha", "low", None),
+        ("browser-beta", "low", None),
+        (None, "low", None),
+    ]
+
+
 def test_camera_execute_reports_no_frame_and_bad_region_as_text():
     assert "No camera is streaming" in CameraProvider(FakeService(live=())).execute("camera", {"question": "q"})
     out = CameraProvider(FakeService()).execute("camera", {"question": "q", "region": "nowhere"})

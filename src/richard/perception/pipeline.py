@@ -8,6 +8,7 @@ here touches a socket; the web app and the plugin call into it.
 """
 from __future__ import annotations
 
+import inspect
 import logging
 import threading
 import time
@@ -17,7 +18,7 @@ from pathlib import Path
 
 from richard.perception import image
 from richard.perception.events import PerceptionEvent, PresenceLog, PresenceState
-from richard.perception.frames import FrameHub, PushFrameSource
+from richard.perception.frames import FrameHub, PushFrameSource, validate_source_id
 from richard.perception.gate import Gate, GatePolicy
 from richard.perception.motion import MotionDetector, StillnessTracker
 from richard.plugins.base import Event
@@ -139,35 +140,84 @@ class PerceptionService:
         self._pipelines: dict[str, SourcePipeline] = {}
         self._sinks: list = []
         self._context_sink = None
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._threads: dict[str, threading.Thread] = {}
+        self._source_stops: dict[str, threading.Event] = {}
+        self._push_sources: set[str] = set()
+        self._push_expiry_s = max(30.0, settings.stale_s * 4.0)
         self._stop = threading.Event()
         self._frames_received: dict[str, int] = {}
         self.started = False
 
     # -- sources ------------------------------------------------------------
 
-    def _ensure_source(self, source_id: str) -> PushFrameSource:
+    def _ensure_source(self, source_id: str, *, spawn: bool = True) -> PushFrameSource:
+        should_spawn = False
         with self._lock:
             source = self.hub.get(source_id)
             if source is None:
                 source = PushFrameSource(source_id, clock=self._clock)
                 self.hub.add(source)
+                self._push_sources.add(source_id)
                 self._pipelines[source_id] = SourcePipeline(
                     source_id, self.hub, settings=self.settings, person_detector=self._person_detector,
                     identifier=self._identifier, clock=self._clock)
-                if self.started:
-                    self._spawn(source_id)
-            return source
+                should_spawn = spawn and self.started
+        if should_spawn:
+            self._spawn(source_id)
+        return source
+
+    def _expired_push_frame(self, source_id: str):
+        with self._lock:
+            if source_id not in self._push_sources:
+                return None
+        frame = self.hub.latest(source_id)
+        if frame is not None and self._clock() - frame.ts > self._push_expiry_s:
+            return frame
+        return None
+
+    def _expire_push_sources(self, *, exclude: str | None = None) -> None:
+        with self._lock:
+            candidates = [source for source in self._push_sources if source != exclude]
+        for source_id in candidates:
+            expired = self._expired_push_frame(source_id)
+            if expired is not None:
+                self.remove_source(source_id, expected_frame=expired)
 
     def push_frame(self, source_id: str, jpeg: bytes) -> None:
-        self._ensure_source(source_id).push_jpeg(jpeg)
-        self._frames_received[source_id] = self._frames_received.get(source_id, 0) + 1
-
-    def remove_source(self, source_id: str) -> None:
+        source_id = validate_source_id(source_id)
+        self._expire_push_sources(exclude=source_id)
+        source = self._ensure_source(source_id, spawn=False)
         with self._lock:
+            # An expiry worker may have removed the old object just before this push.
+            if self.hub.get(source_id) is not source:
+                source = self._ensure_source(source_id, spawn=False)
+            try:
+                source.push_jpeg(jpeg)
+            except ValueError:
+                if source.latest() is None and self.hub.get(source_id) is source:
+                    self.remove_source(source_id)
+                raise
+            self._frames_received[source_id] = self._frames_received.get(source_id, 0) + 1
+            spawn = self.started
+        if spawn:
+            self._spawn(source_id)
+
+    def remove_source(self, source_id: str, *, expected_frame=None) -> bool:
+        with self._lock:
+            if expected_frame is not None and self.hub.latest(source_id) is not expected_frame:
+                return False
             self.hub.remove(source_id)
             self._pipelines.pop(source_id, None)
+            self._frames_received.pop(source_id, None)
+            self._push_sources.discard(source_id)
+            stop = self._source_stops.pop(source_id, None)
+            thread = self._threads.pop(source_id, None)
+            if stop is not None:
+                stop.set()
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=2.0)
+        return True
 
     def live_sources(self) -> list[str]:
         return [s for s in self.hub.sources() if not self.hub.is_stale(s)]
@@ -176,17 +226,27 @@ class PerceptionService:
 
     def _spawn(self, source_id: str) -> None:
         period = 1.0 / max(self.settings.stream_fps, 0.2)
+        stop = threading.Event()
 
         def run() -> None:
-            while not self._stop.is_set():
+            while not self._stop.is_set() and not stop.is_set():
+                expired = self._expired_push_frame(source_id)
+                if expired is not None:
+                    if self.remove_source(source_id, expected_frame=expired):
+                        return
                 try:
                     self.process(source_id)
                 except Exception as exc:
                     log.warning("perception: pipeline %s failed: %s", source_id, exc)
-                self._stop.wait(period)
+                stop.wait(period)
 
         thread = threading.Thread(target=run, name=f"richard-perception-{source_id}", daemon=True)
-        self._threads[source_id] = thread
+        with self._lock:
+            existing = self._threads.get(source_id)
+            if existing is not None and existing.is_alive():
+                return
+            self._source_stops[source_id] = stop
+            self._threads[source_id] = thread
         thread.start()
 
     def start(self) -> None:
@@ -198,9 +258,16 @@ class PerceptionService:
     def stop(self) -> None:
         self._stop.set()
         self.started = False
-        for thread in self._threads.values():
+        with self._lock:
+            stops = list(self._source_stops.values())
+            threads = list(self._threads.values())
+        for stop in stops:
+            stop.set()
+        for thread in threads:
             thread.join(timeout=2.0)
-        self._threads.clear()
+        with self._lock:
+            self._threads.clear()
+            self._source_stops.clear()
 
     # -- events ---------------------------------------------------------------
 
@@ -232,7 +299,12 @@ class PerceptionService:
         return stop
 
     def process(self, source_id: str) -> list[PerceptionEvent]:
-        pipeline = self._pipelines.get(source_id)
+        expired = self._expired_push_frame(source_id)
+        if expired is not None:
+            if self.remove_source(source_id, expected_frame=expired):
+                return []
+        with self._lock:
+            pipeline = self._pipelines.get(source_id)
         if pipeline is None:
             return []
         raw = pipeline.step()
@@ -250,7 +322,16 @@ class PerceptionService:
             taken = False
             if self._context_sink is not None:
                 try:
-                    taken = bool(self._context_sink(event.line(), wake=event.kind in WAKE_KINDS))
+                    parameters = inspect.signature(self._context_sink).parameters.values()
+                    source_aware = any(
+                        parameter.kind == inspect.Parameter.VAR_KEYWORD
+                        or parameter.name == "source_id"
+                        for parameter in parameters
+                    )
+                    kwargs = {"wake": event.kind in WAKE_KINDS}
+                    if source_aware:
+                        kwargs.update(source_id=event.source_id, kind=event.kind)
+                    taken = bool(self._context_sink(event.line(), **kwargs))
                 except Exception as exc:
                     log.warning("perception: context sink failed: %s", exc)
             if not taken:
@@ -264,14 +345,21 @@ class PerceptionService:
     # -- queries ----------------------------------------------------------------
 
     def status(self) -> dict:
-        sources = [{"id": s, "stale": self.hub.is_stale(s), "frames": self._frames_received.get(s, 0)}
-                   for s in self.hub.sources() if s in self._pipelines]
+        with self._lock:
+            pipeline_ids = set(self._pipelines)
+            frame_counts = dict(self._frames_received)
+        sources = [{"id": s, "stale": self.hub.is_stale(s), "frames": frame_counts.get(s, 0)}
+                   for s in self.hub.sources() if s in pipeline_ids]
         return {"enabled": True, "identity_enabled": self.settings.identity_enabled, "sources": sources,
                 "presence": self.presence(), "gallery": self.gallery.list() if self.gallery else []}
 
     def presence(self) -> list[dict]:
         out = []
-        for source_id, pipeline in self._pipelines.items():
+        with self._lock:
+            pipelines = list(self._pipelines.items())
+        for source_id, pipeline in pipelines:
+            if self.hub.is_stale(source_id):
+                continue
             for person in pipeline.presence.present():
                 out.append({"source": source_id, "subject": person.subject, "since": person.since})
         return out
@@ -281,13 +369,20 @@ class PerceptionService:
 
     def snapshot(self, source_id: str | None = None, detail: str = "low", region: str | None = None):
         """(jpeg, meta) from the latest frame of a live source, or None."""
+        if source_id is not None:
+            source_id = validate_source_id(source_id)
         candidates = [source_id] if source_id else self.live_sources()
         for sid in candidates:
             frame = self.hub.latest(sid)
             if frame is None or self.hub.is_stale(sid):
                 continue
             rgb = frame.rgb
-            meta = {"source": sid, "detail": detail, "region": region}
+            meta = {
+                "source": sid,
+                "detail": detail,
+                "region": region,
+                "age_s": max(0.0, self._clock() - frame.ts),
+            }
             if region:
                 rgb = image.crop(rgb, image.region_box(region))
                 rgb = image.resize_long_edge(rgb, 800)

@@ -83,6 +83,10 @@ async def handle_realtime(ws, session_factory, *, token: str = "") -> None:
                         emit(events.error(str(exc)))
                 elif etype == "response.create":
                     session.create_response()
+                elif etype == "playback.update":
+                    session.playback_update(event["response_id"], event["playing"])
+            except ValueError as exc:
+                emit(events.error(str(exc)))
             except Exception:
                 # A malformed-but-parseable event must never kill the connection.
                 emit(events.error(f"internal error handling {etype}", code="internal_error"))

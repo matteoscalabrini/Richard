@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 
 from richard.brain.completion import Completion
@@ -43,6 +43,13 @@ def _promises_action(text: str) -> bool:
 
 def _is_nothing_to_run(text: str) -> bool:
     return (text or "").strip().rstrip(".").strip().upper() == NOTHING_TO_RUN
+
+
+def _has_image(content) -> bool:
+    return isinstance(content, list) and any(
+        isinstance(part, dict) and part.get("type") == "image_url"
+        for part in content
+    )
 
 
 @dataclass(frozen=True)
@@ -121,7 +128,8 @@ class Engine:
     def _record_tool_round(
         self, conversation: Conversation, working: list[dict], completion: Completion,
         deferred: frozenset[str] = frozenset(),
-    ) -> None:
+        observer: Callable[[str], None] | None = None,
+    ) -> bool:
         """Execute the calls and append the round to both the request and the history.
 
         The round is persisted verbatim (see Message): the next turn must replay the
@@ -138,6 +146,8 @@ class Engine:
         for call in completion.tool_calls:
             if call.id in deferred:
                 continue
+            if observer is not None:
+                observer("tool")
             result = self._execute(call.name, call.arguments)
             text = result.text if isinstance(result, ToolResult) else result
             if isinstance(result, ToolResult):
@@ -150,6 +160,7 @@ class Engine:
             parts = user_parts(None, images)
             working.append({"role": "user", "content": parts})
             conversation.add_user(parts)
+        return bool(images)
 
     def respond(self, conversation: Conversation) -> str:
         working: list[dict] = [{"role": "system", "content": self._head(conversation)}]
@@ -186,10 +197,11 @@ class Engine:
         return last_content or "Sorry, I got a bit tangled up."
 
     def respond_streaming(
-        self, conversation: Conversation, client_tools: list[dict] | None = None
+        self, conversation: Conversation, client_tools: list[dict] | None = None,
+        observer: Callable[[str], None] | None = None,
     ) -> Iterator[str | ClientToolCall]:
         working: list[dict] = [{"role": "system", "content": self._head(conversation)}]
-        working += [m.to_chat() for m in conversation.history()]
+        working += [m.to_chat() for m in conversation.request_history()]
         client_schemas = self._client_schemas(client_tools)
         client_names = {s["function"]["name"] for s in client_schemas}
         schemas = [s for provider in self._providers for s in provider.schemas()] + client_schemas
@@ -197,49 +209,63 @@ class Engine:
         nudged = False
         hold = False  # buffer the nudge round so a sentinel reply is never spoken
         turn_text = ""
-        for _ in range(self._max_rounds):
-            spoken = ""
-            tool_calls = []
-            for event in self._brain.stream(working, schemas):
-                if event.delta:
-                    spoken += event.delta
-                    if not hold:
-                        yield event.delta
-                if event.done:
-                    tool_calls = event.tool_calls
-            turn_text += spoken
-            if hold:
-                hold = False
-                if _is_nothing_to_run(spoken):
-                    if not tool_calls:
-                        return  # false-positive nudge; the sentinel stays silent
-                    spoken = ""
-                elif spoken:
-                    yield spoken
-            if not tool_calls:
-                if (
-                    not any_tool_call
-                    and not nudged
-                    and schemas
-                    and _promises_action(turn_text)
-                ):
-                    nudged = True
-                    hold = True
-                    working.append({"role": "assistant", "content": spoken})
-                    working.append({"role": "user", "content": NUDGE_PROMPT})
-                    continue
-                return
-            any_tool_call = True
-            client_calls = [c for c in tool_calls if c.name in client_names]
-            self._record_tool_round(
-                conversation, working, Completion(content=spoken or None, tool_calls=tool_calls),
-                deferred=frozenset(c.id for c in client_calls),
-            )
-            if client_calls:
-                # The turn ends here: the client owns the next step. The next
-                # response.create runs a fresh turn on the appended history.
-                for call in client_calls:
-                    yield ClientToolCall(id=call.id, name=call.name, arguments=json.dumps(call.arguments))
-                return
+        next_phase = "vision" if conversation.observation is not None or (
+            conversation.history()
+            and _has_image(conversation.history()[-1].content)
+        ) else "thinking"
+        try:
+            for _ in range(self._max_rounds):
+                if observer is not None:
+                    observer(next_phase)
+                next_phase = "thinking"
+                spoken = ""
+                tool_calls = []
+                for event in self._brain.stream(working, schemas):
+                    if event.delta:
+                        spoken += event.delta
+                        if not hold:
+                            yield event.delta
+                    if event.done:
+                        tool_calls = event.tool_calls
+                turn_text += spoken
+                if hold:
+                    hold = False
+                    if _is_nothing_to_run(spoken):
+                        if not tool_calls:
+                            return  # false-positive nudge; the sentinel stays silent
+                        spoken = ""
+                    elif spoken:
+                        yield spoken
+                if not tool_calls:
+                    if (
+                        not any_tool_call
+                        and not nudged
+                        and schemas
+                        and _promises_action(turn_text)
+                    ):
+                        nudged = True
+                        hold = True
+                        working.append({"role": "assistant", "content": spoken})
+                        working.append({"role": "user", "content": NUDGE_PROMPT})
+                        continue
+                    return
+                any_tool_call = True
+                client_calls = [c for c in tool_calls if c.name in client_names]
+                got_images = self._record_tool_round(
+                    conversation, working, Completion(content=spoken or None, tool_calls=tool_calls),
+                    deferred=frozenset(c.id for c in client_calls), observer=observer,
+                )
+                if got_images:
+                    next_phase = "vision"
+                if client_calls:
+                    # The turn ends here: the client owns the next step. The next
+                    # response.create runs a fresh turn on the appended history.
+                    for call in client_calls:
+                        yield ClientToolCall(id=call.id, name=call.name, arguments=json.dumps(call.arguments))
+                    return
+        except Exception:
+            if observer is not None:
+                observer("error")
+            raise
         # max_rounds exhausted: the generator just stops; the caller (voice loop) is
         # responsible for any fallback. (respond() returns an error string here instead.)

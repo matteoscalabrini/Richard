@@ -42,6 +42,7 @@ class FakeSession:
         self.responses = 0
         self.cancelled = False
         self.closed = False
+        self.playback = []
         self.samplerate = 24000
 
     def feed_audio(self, pcm):
@@ -57,6 +58,9 @@ class FakeSession:
 
     def cancel_response(self):
         self.cancelled = True
+
+    def playback_update(self, response_id, playing):
+        self.playback.append((response_id, playing))
 
     def update(self, patch):
         return {"barge_in": patch.get("barge_in", "vad")}
@@ -202,3 +206,11 @@ def test_session_update_with_tools_is_passed_through():
     (session,) = run(ws)
     updated = [m for m in ws.sent if m["type"] == "session.updated"]
     assert updated  # the fake echoes barge_in; the real session's tool handling is tested in test_realtime_session
+
+
+def test_playback_update_is_dispatched_to_the_session():
+    ws = FakeWs([json.dumps({
+        "type": "playback.update", "response_id": "resp_1", "playing": False,
+    })])
+    (session,) = run(ws)
+    assert session.playback == [("resp_1", False)]

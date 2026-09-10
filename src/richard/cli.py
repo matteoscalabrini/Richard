@@ -465,7 +465,8 @@ def _build_stt(config):
     return WhisperSTT(config.voice.stt_model)
 
 
-def _realtime_session_factory(config, *, brain, providers_fn, synth, transcriber, vad_factory, registry=None):
+def _realtime_session_factory(config, *, brain, providers_fn, synth, transcriber, vad_factory,
+                              registry=None, perception=None):
     """Build the per-connection session factory for /v1/realtime.
 
     One transcriber and one TTS engine are shared across sessions (models load
@@ -473,15 +474,32 @@ def _realtime_session_factory(config, *, brain, providers_fn, synth, transcriber
     """
     from richard.realtime.session import RealtimeSession
     from richard.realtime.vad import EndpointDetector
+    from richard.perception.camera import CameraProvider
 
     def factory(emit):
         detector = EndpointDetector(
             vad_factory(), silence_ms=config.voice.endpoint_silence_ms
         )
-        engine = Engine(brain, providers_fn(), config.personality)
+        providers = []
+        camera_providers = []
+        for provider in providers_fn():
+            if isinstance(provider, CameraProvider):
+                provider = provider.clone()
+                camera_providers.append(provider)
+            providers.append(provider)
+        engine = Engine(brain, providers, config.personality)
+
+        def bind_source(source_id):
+            for provider in camera_providers:
+                provider.bind_source(source_id)
+
+        observation = None
+        if perception is not None:
+            observation = lambda source_id: perception.snapshot(source_id=source_id, detail="low")
         return RealtimeSession(
             engine=engine, transcriber=transcriber, tts=synth,
             detector=detector, emit=emit, registry=registry,
+            observation=observation, source_change=bind_source,
         )
 
     return factory
@@ -825,7 +843,7 @@ def _run_serve(write: Callable[[str], None] = print) -> int:
             factory = _realtime_session_factory(
                 config, brain=brain, providers_fn=_serve_providers, synth=synth,
                 transcriber=transcriber, vad_factory=lambda: SileroVAD(silero_path),
-                registry=session_registry,
+                registry=session_registry, perception=perception_service,
             )
             realtime_coro = _serve_realtime_guarded(
                 serve_realtime(

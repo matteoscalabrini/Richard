@@ -28,13 +28,23 @@ class SessionRegistry:
         with self._lock:
             return list(self._sessions)
 
-    def offer_context(self, line: str, wake: bool = False) -> bool:
-        """Queue a context line on every open session; with `wake`, ask each idle session
-        to run an unsolicited turn on it now (busy sessions keep it for their next turn)."""
+    def offer_context(self, line: str, wake: bool = False, *,
+                      source_id: str | None = None, kind: str | None = None) -> bool:
+        """Route perception context to its source-bound session.
+
+        Unbound clients retain the legacy all-source context stream. Scene changes
+        become wake opportunities only for source-bound visual clients.
+        """
         sessions = self.active()
         log.info("perception context offered to %d session(s) (wake=%s): %s", len(sessions), wake, line)
+        taken = False
         for session in sessions:
+            bound = getattr(session, "source_id", None)
+            visual = bool(getattr(session, "visual_context", False))
+            if bound is not None and (not visual or source_id != bound):
+                continue
             session.add_context(line)
-            if wake:
+            taken = True
+            if wake or (kind == "scene_changed" and bound is not None and visual):
                 session.wake()
-        return bool(sessions)
+        return taken

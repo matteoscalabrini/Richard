@@ -47,7 +47,7 @@ class FakeEngine:
         self.deltas = deltas
         self.seen = []
 
-    def respond_streaming(self, conversation, client_tools=None):
+    def respond_streaming(self, conversation, client_tools=None, observer=None):
         self.seen.append([ (m.role, m.content) for m in conversation.history() ])
         yield from self.deltas
 
@@ -261,7 +261,7 @@ def test_explicit_cancel_stops_response():
 
 
 class DownEngine:
-    def respond_streaming(self, conversation, client_tools=None):
+    def respond_streaming(self, conversation, client_tools=None, observer=None):
         from richard.errors import BrainUnreachable
         raise BrainUnreachable("boom")
         yield  # pragma: no cover — makes this a generator
@@ -328,7 +328,7 @@ def test_cancel_during_thinking_is_not_lost():
 
 
 class ExplodingEngine:
-    def respond_streaming(self, conversation, client_tools=None):
+    def respond_streaming(self, conversation, client_tools=None, observer=None):
         raise RuntimeError("kaboom")
         yield  # pragma: no cover — makes this a generator
 
@@ -394,7 +394,7 @@ class CameraEngine:
     def tool_names(self):
         return ["remember", "forget"]
 
-    def respond_streaming(self, conversation, client_tools=None):
+    def respond_streaming(self, conversation, client_tools=None, observer=None):
         self.client_tools.append(list(client_tools or []))
         self.seen.append([m.to_chat() for m in conversation.history()])
         self.turns += 1
@@ -516,7 +516,7 @@ def test_response_create_seals_dangling_calls_before_running():
 
 
 class RejectingEngine:
-    def respond_streaming(self, conversation, client_tools=None):
+    def respond_streaming(self, conversation, client_tools=None, observer=None):
         raise BrainRejectedInput("brain rejected the request (400): no vision")
         yield  # pragma: no cover
 
@@ -599,7 +599,7 @@ def test_wake_runs_an_unsolicited_turn_with_the_context_and_the_silence_rule():
     session.close()
 
 
-def test_wake_without_context_or_while_busy_does_nothing():
+def test_wake_without_context_does_nothing_and_busy_wake_retries_once():
     session, emitted, done = collect_session(detector=ScriptedDetector([]))
     assert session.wake() is False  # nothing queued
     tts = GatedTTS()
@@ -608,10 +608,10 @@ def test_wake_without_context_or_while_busy_does_nothing():
     busy.create_response()
     assert tts.entered.wait(5)
     busy.add_context("someone entered (browser)")
-    assert busy.wake() is False  # a turn is running; the line waits for the next turn
+    assert busy.wake() is False  # a turn is running; the line waits for the idle boundary
     tts.release.set()
-    wait(done2)
-    assert busy._has_context() is True
+    assert wait_until(lambda: len([e for e in emitted2 if e["type"] == "response.done"]) == 2)
+    assert busy._has_context() is False
     session.close(); busy.close()
 
 
@@ -661,7 +661,7 @@ class QuietCameraEngine:
         self.looks = looks
         self.seen = []
 
-    def respond_streaming(self, conversation, client_tools=None):
+    def respond_streaming(self, conversation, client_tools=None, observer=None):
         self.seen.append([m.to_chat() for m in conversation.history()])
         if len(self.seen) <= self.looks:
             call_id = f"look-{len(self.seen)}"
@@ -741,8 +741,10 @@ def test_fresh_user_turn_does_not_inherit_unsolicited_camera_silence(new_input):
 
 def test_user_input_during_camera_handoff_takes_priority():
     class InterruptedCameraEngine(QuietCameraEngine):
-        def respond_streaming(self, conversation, client_tools=None):
-            for delta in super().respond_streaming(conversation, client_tools=client_tools):
+        def respond_streaming(self, conversation, client_tools=None, observer=None):
+            for delta in super().respond_streaming(
+                conversation, client_tools=client_tools, observer=observer
+            ):
                 yield delta
                 if isinstance(delta, ClientToolCall):
                     # A typed message arrives before this response finishes handing off.

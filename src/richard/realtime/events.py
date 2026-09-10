@@ -24,6 +24,7 @@ CLIENT_EVENT_TYPES = {
     "response.cancel",
     "response.create",
     "conversation.item.create",
+    "playback.update",
 }
 
 ACTIVE_RESPONSE_CODE = "conversation_already_has_active_response"
@@ -72,8 +73,24 @@ def transcription_completed(item_id: str, transcript: str) -> dict:
     }
 
 
-def response_created(response_id: str) -> dict:
-    return {"type": "response.created", "response": {"id": response_id}}
+def response_created(response_id: str, *, turn_id: str | None = None,
+                     unsolicited: bool = False) -> dict:
+    response = {"id": response_id}
+    if turn_id is not None:
+        response.update(turn_id=turn_id, unsolicited=unsolicited)
+    return {"type": "response.created", "response": response}
+
+
+def response_activity(response_id: str, turn_id: str, phase: str, *, unsolicited: bool) -> dict:
+    if phase not in ("thinking", "tool", "vision", "answer", "error"):
+        raise ValueError(f"unknown response activity phase: {phase}")
+    return {
+        "type": "response.activity",
+        "response_id": response_id,
+        "turn_id": turn_id,
+        "phase": phase,
+        "unsolicited": unsolicited,
+    }
 
 
 def text_delta(response_id: str, delta: str) -> dict:
@@ -192,4 +209,9 @@ def parse_client_event(raw: str | bytes) -> dict:
             event["audio"] = base64.b64decode(event.get("audio") or "", validate=True)
         except (binascii.Error, TypeError):
             raise ValueError("input_audio_buffer.append: 'audio' must be base64")
+    elif etype == "playback.update":
+        if not isinstance(event.get("response_id"), str) or not event["response_id"]:
+            raise ValueError("playback.update: 'response_id' must be a non-empty string")
+        if not isinstance(event.get("playing"), bool):
+            raise ValueError("playback.update: 'playing' must be a boolean")
     return event

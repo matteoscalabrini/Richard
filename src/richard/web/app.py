@@ -40,6 +40,7 @@ from richard.errors import BrainRejectedInput, BrainUnreachable, HomeAssistantEr
 from richard.plugins.home_assistant.client import HomeAssistantClient
 from richard.memory import MemoryStore
 from richard.persona import BASE_CHARACTER
+from richard.perception.frames import validate_source_id
 from richard.realtime.cues import read_cues
 from richard.satellite.relays import RelayRegistry
 from richard.voice.effects import EFFECTS
@@ -610,7 +611,10 @@ class WebApp:
             payload, err = self._parse_object(body)
             if err:
                 return err
-            source = str(payload.get("source") or "browser")[:32]
+            try:
+                source = validate_source_id(payload.get("source"), default="browser")
+            except ValueError as exc:
+                return Response.bad_request(str(exc))
             try:
                 jpeg = base64.b64decode(str(payload.get("image_base64", "")), validate=True)
             except (ValueError, binascii.Error):

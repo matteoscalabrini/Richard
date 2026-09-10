@@ -57,6 +57,9 @@ class Conversation:
     def __init__(self, system_prompt: str = DEFAULT_SYSTEM_PROMPT) -> None:
         self._system_prompt = system_prompt
         self._history: list[Message] = []
+        # A fresh ambient camera frame is working context for one request shape, not
+        # durable conversation history. It may be replaced or cleared every turn.
+        self._observation: Message | None = None
         # The engine pins its assembled system prompt here on the first turn and reuses
         # it for the life of the conversation. Provider context (the memory list above
         # all) changes as tools run; if it changed the head mid-conversation, every
@@ -78,6 +81,19 @@ class Conversation:
 
     def add_tool_result(self, tool_call_id: str, content: str) -> None:
         self._history.append(Message(role="tool", content=content, tool_call_id=tool_call_id))
+
+    @property
+    def observation(self) -> Message | None:
+        return self._observation
+
+    def set_observation(self, content: list[dict] | None) -> None:
+        self._observation = Message(role="user", content=content) if content else None
+
+    def request_history(self) -> list[Message]:
+        messages = self.history()
+        if self._observation is not None:
+            messages.append(self._observation)
+        return messages
 
     def pending_client_calls(self) -> list[str]:
         """Ids of the calls in the most recent tool round that have no tool result yet.

@@ -4,6 +4,7 @@ so a connected Reachy app's client-side `camera` (spec 3a) is used instead."""
 from __future__ import annotations
 
 import json
+import threading
 
 from richard.perception import image
 from richard.providers.base import ToolResult
@@ -54,19 +55,36 @@ FORGET_SCHEMA = {"type": "function", "function": {
 
 
 class CameraProvider:
-    def __init__(self, service) -> None:
+    def __init__(self, service, *, source_id: str | None = None) -> None:
         self._service = service
+        self._source_id = source_id
+        self._lock = threading.Lock()
+
+    def clone(self) -> "CameraProvider":
+        with self._lock:
+            return CameraProvider(self._service, source_id=self._source_id)
+
+    def bind_source(self, source_id: str | None) -> None:
+        with self._lock:
+            self._source_id = source_id
 
     def schemas(self) -> list[dict]:
-        return [CAMERA_SCHEMA] if self._service.live_sources() else []
+        with self._lock:
+            source_id = self._source_id
+        live = self._service.live_sources()
+        return [CAMERA_SCHEMA] if (
+            source_id in live if source_id is not None else bool(live)
+        ) else []
 
     def execute(self, name: str, arguments: dict):
         if name != "camera":
             return f"Unknown tool: {name}."
         detail = "high" if arguments.get("detail") == "high" else "low"
         region = (arguments.get("region") or "").strip() or None
+        with self._lock:
+            source_id = self._source_id
         try:
-            shot = self._service.snapshot(detail=detail, region=region)
+            shot = self._service.snapshot(source_id=source_id, detail=detail, region=region)
         except ValueError as exc:
             return f"Cannot take that picture: {exc}"
         if shot is None:

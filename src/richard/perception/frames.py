@@ -7,6 +7,7 @@ a directory replays files for tests. Nothing here runs a thread: the pipeline
 """
 from __future__ import annotations
 
+import re
 import threading
 import time
 from dataclasses import dataclass
@@ -16,6 +17,20 @@ from typing import Protocol
 import numpy as np
 
 from richard.perception import image
+
+SOURCE_ID_MAX_LENGTH = 64
+_SOURCE_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}\Z")
+
+
+def validate_source_id(value, *, default: str | None = None) -> str:
+    """Return a safe routing identifier, or raise without echoing hostile input."""
+    if value is None and default is not None:
+        value = default
+    if not isinstance(value, str) or not _SOURCE_ID_RE.fullmatch(value):
+        raise ValueError(
+            f"source_id must be 1-{SOURCE_ID_MAX_LENGTH} letters, digits, '.', '_', ':', or '-'"
+        )
+    return value
 
 
 @dataclass(frozen=True)
