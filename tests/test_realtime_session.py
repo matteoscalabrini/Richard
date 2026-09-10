@@ -294,7 +294,16 @@ def test_tts_chunk_failure_skips_only_that_chunk():
     session.feed_audio(FRAME)
     session.feed_audio(FRAME)
     wait(done)
-    assert any(e["type"] == "error" and e["error"]["code"] == "tts_error" for e in emitted)
+    response = next(e["response"] for e in emitted if e["type"] == "response.created")
+    error_activity = next(
+        e for e in emitted if e["type"] == "response.activity" and e["phase"] == "error"
+    )
+    legacy_error = next(
+        e for e in emitted if e["type"] == "error" and e["error"]["code"] == "tts_error"
+    )
+    assert error_activity["response_id"] == response["id"]
+    assert error_activity["turn_id"] == response["turn_id"]
+    assert emitted.index(error_activity) < emitted.index(legacy_error)
     assert emitted[-1]["response"]["status"] == "completed"
     assert len(tts.spoken) >= 2  # the later chunk still went out
     session.close()
@@ -314,16 +323,53 @@ class GatedTranscriber(FakeTranscriber):
         return self.text
 
 
-def test_cancel_during_thinking_is_not_lost():
+def test_cancel_during_blocked_stt_stops_before_transcript_or_inference():
     tr = GatedTranscriber()
-    session, emitted, done = collect_session(transcriber=tr)
+    engine = FakeEngine()
+    session, emitted, done = collect_session(transcriber=tr, engine=engine)
     session.feed_audio(FRAME)
     session.feed_audio(FRAME)
     assert tr.entered.wait(5)   # turn thread is inside final() → 'thinking'
     session.cancel_response()
     tr.release.set()
-    wait(done)
-    assert emitted[-1]["response"]["status"] == "cancelled"
+    assert wait_until(lambda: session._turn_thread is None)
+    assert not done.is_set()
+    assert not any(e["type"] == "conversation.item.input_audio_transcription.completed" for e in emitted)
+    assert not any(e["type"] == "response.created" for e in emitted)
+    assert session.conversation.history() == []
+    assert engine.seen == []
+    session.close()
+
+
+def test_cancel_after_transcript_event_stops_before_response_mutation():
+    emitted = []
+    engine = FakeEngine()
+    session = None
+
+    def emit(event):
+        emitted.append(event)
+        if event["type"] == "conversation.item.input_audio_transcription.completed":
+            session.cancel_response()
+
+    session = RealtimeSession(
+        engine=engine,
+        transcriber=FakeTranscriber(),
+        tts=FakeTTS(),
+        detector=ScriptedDetector([[("speech_started",)], [("utterance", b"pcm")]]),
+        emit=emit,
+    )
+    session.feed_audio(FRAME)
+    session.feed_audio(FRAME)
+    assert wait_until(
+        lambda: any(
+            e["type"] == "conversation.item.input_audio_transcription.completed"
+            for e in emitted
+        )
+    )
+    assert wait_until(lambda: session._turn_thread is None)
+    assert not any(e["type"] == "response.created" for e in emitted)
+    assert session.conversation.history() == []
+    assert engine.seen == []
     session.close()
 
 

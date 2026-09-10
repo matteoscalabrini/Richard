@@ -415,26 +415,35 @@ class RealtimeSession:
     def _run_turn(self, token, cancel, get_transcript, announce_transcript, item_id) -> None:
         queued = []
         with self._state_lock:
-            if token is not self._active_token:
+            if token is not self._active_token or self._closed.is_set():
                 return
             queued, self._queued_items = self._queued_items, []
             self.state = "thinking"
         with self._conversation_lock:
             for item, fresh in queued:
                 self._apply_item(item, fresh=fresh)
+            if cancel.is_set() or not self._owns(token):
+                return
             if get_transcript is None:
                 self._respond(None, token, cancel)
                 return
             try:
                 transcript = get_transcript()
             except Exception as exc:
-                if self._owns(token):
-                    self._emit(events.error(f"transcription failed: {exc}", code="stt_error"))
+                self._emit_owned(
+                    token,
+                    events.error(f"transcription failed: {exc}", code="stt_error"),
+                    cancel,
+                )
                 return
-            if not transcript or not self._owns(token):
+            if not transcript:
                 return
-            if announce_transcript and self._owns(token):
-                self._emit(events.transcription_completed(item_id, transcript))
+            with self._state_lock:
+                if (token is not self._active_token or cancel.is_set()
+                        or self._closed.is_set()):
+                    return
+                if announce_transcript:
+                    self._emit(events.transcription_completed(item_id, transcript))
             self._respond(transcript, token, cancel)
 
     def _owns(self, token) -> bool:
@@ -482,11 +491,16 @@ class RealtimeSession:
         ]
 
     def _respond(self, user_text: str | None, token, cancel: threading.Event) -> None:
+        with self._state_lock:
+            if (token is not self._active_token or cancel.is_set()
+                    or self._closed.is_set()):
+                return
         observed_source, observation = self._current_observation()
         # A call the client never answered would leave a tool call without a result in
         # the served prefix; seal it so the model sees the failure instead of a broken prompt.
         with self._state_lock:
-            if token is not self._active_token or self._closed.is_set():
+            if (token is not self._active_token or cancel.is_set()
+                    or self._closed.is_set()):
                 return
             self.conversation.seal_pending(NO_CLIENT_RESULT)
             input_generation = self._input_generation
@@ -554,7 +568,9 @@ class RealtimeSession:
                     if self._owns(token):
                         self._continuation_open = True
                     tail = chunker.flush()
-                    if tail and not self._speak(response_id, turn_id, unsolicited, tail, token, cancel):
+                    if tail and not self._speak(
+                        response_id, tail, token, cancel, activity,
+                    ):
                         status = "cancelled"
                         break
                     vision.log_client_call(delta.name, delta.arguments)
@@ -564,7 +580,7 @@ class RealtimeSession:
                 full += delta
                 self._emit_owned(token, events.text_delta(response_id, delta), cancel)
                 if not all(
-                    self._speak(response_id, turn_id, unsolicited, c, token, cancel)
+                    self._speak(response_id, c, token, cancel, activity)
                     for c in chunker.feed(delta)
                 ):
                     status = "cancelled"
@@ -576,7 +592,9 @@ class RealtimeSession:
                     full += held
                     self._emit_owned(token, events.text_delta(response_id, held), cancel)
                     if not all(
-                        self._speak(response_id, turn_id, unsolicited, c, token, cancel)
+                        self._speak(
+                            response_id, c, token, cancel, activity,
+                        )
                         for c in chunker.feed(held)
                     ):
                         status = "cancelled"
@@ -586,24 +604,32 @@ class RealtimeSession:
                 log.info("unsolicited turn: spoke %d chars: %r", len(full), full[:120])
             if status == "completed" and not handed_to_client:
                 tail = chunker.flush()
-                if tail and not self._speak(response_id, turn_id, unsolicited, tail, token, cancel):
+                if tail and not self._speak(
+                    response_id, tail, token, cancel, activity,
+                ):
                     status = "cancelled"
         except BrainRejectedInput as exc:
             status = "failed"
             activity("error")
             self._emit_owned(token, events.error(str(exc), code="brain_rejected_input"))
-            self._speak(response_id, turn_id, unsolicited, IMAGE_REJECTED_LINE, token, cancel)
+            self._speak(
+                response_id, IMAGE_REJECTED_LINE, token, cancel, activity,
+            )
         except BrainUnreachable:
             status = "failed"
             activity("error")
             self._emit_owned(token, events.error("brain unreachable", code="brain_unreachable"))
-            self._speak(response_id, turn_id, unsolicited, BRAIN_DOWN_LINE, token, cancel)
+            self._speak(
+                response_id, BRAIN_DOWN_LINE, token, cancel, activity,
+            )
         except Exception as exc:
             status = "failed"
             activity("error")
             self._emit_owned(token, events.error(f"engine failed: {exc}", code="engine_error"))
             # Audible failure: silence here reads as a crash to the user.
-            self._speak(response_id, turn_id, unsolicited, TURN_FAILED_LINE, token, cancel)
+            self._speak(
+                response_id, TURN_FAILED_LINE, token, cancel, activity,
+            )
         # A turn handed to the client already stored its text inside the tool-call
         # message; storing it again would put a plain reply after the call.
         owned = self._owns(token)
@@ -630,8 +656,8 @@ class RealtimeSession:
             self.state = "listening"
         self._emit(events.response_done(response_id, status))
 
-    def _speak(self, response_id: str, turn_id: str, unsolicited: bool, text: str,
-               token, cancel: threading.Event) -> bool:
+    def _speak(self, response_id: str, text: str, token, cancel: threading.Event,
+               activity) -> bool:
         """Synth one chunk and emit it. False = interrupted (stop the response)."""
         if cancel.is_set() or not self._owns(token):
             return False
@@ -643,14 +669,13 @@ class RealtimeSession:
             pcm = self._tts.synth(text)
         except Exception as exc:
             # One bad chunk must not kill the reply (SpeechPipeline philosophy).
+            activity("error")
             self._emit_owned(token, events.error(f"tts failed on a chunk: {exc}", code="tts_error"))
             return True
         with self._state_lock:
             if token is not self._active_token or cancel.is_set() or self._closed.is_set():
                 return False
-            self._emit(events.response_activity(
-                response_id, turn_id, "answer", unsolicited=unsolicited,
-            ))
+            activity("answer")
             if self.playback_ack:
                 self._playback_response_id = response_id
             self._emit(events.audio_delta(response_id, pcm))
