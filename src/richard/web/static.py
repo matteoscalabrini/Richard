@@ -1529,8 +1529,7 @@ async function sendChat(){
     : text;
   chatHistory.push({role: 'user', content}); renderChatHistory();
   if (rt && rt.ws.readyState === 1) {
-    rtFlushPlayback();
-    rt.presence.speechStarted();
+    rtInterruptResponse();
     const realtimeContent = [];
     if (text) realtimeContent.push({type: 'input_text', text});
     if (image) realtimeContent.push({type: 'input_image', image_url: image.url});
@@ -1638,7 +1637,7 @@ const presenceUploader = new FrameUploader({
 });
 
 let rt = null;  // {ws, ctx, micStream, node, sources, outRate, userLine, replyLine, presence}
-let rtStarting = false;
+let rtStarting = null;
 let rtStartGeneration = 0;
 
 // The same tool the Reachy Conversation App offers on the robot, so this page exercises
@@ -1726,6 +1725,14 @@ function rtFlushPlayback(state){
   responseIds.forEach(responseId => current.presence.realAudioFlushed(responseId));
 }
 
+function rtInterruptResponse(){
+  if (!rt) return;
+  rt.presence.speechStarted();
+  rtFlushPlayback();
+  rt.pendingCall = null;
+  rt.replyLine = '';
+}
+
 function rtHandle(msg){
   switch (msg.type){
     case 'session.created':
@@ -1749,8 +1756,7 @@ function rtHandle(msg){
       // ("listening") while seconds of audio are still queued here — truncated
       // never arrives for a completed response. The client owns playback, so
       // speech onset must flush the queue locally, whatever the server state.
-      rt.presence.speechStarted();
-      if (rt.sources.length) rtFlushPlayback();
+      rtInterruptResponse();
       setEntityState('listening'); setStatus('chat', 'listening…', ''); rt.userLine = '';
       break;
     case 'conversation.item.input_audio_transcription.delta': setStatus('chat', '“' + msg.delta + '”', ''); break;
@@ -1781,10 +1787,28 @@ function rtHandle(msg){
   }
 }
 
+function cleanupVoiceStartup(startup){
+  if (startup.ws) {
+    try { startup.ws.onclose = null; startup.ws.close(); } catch (_) {}
+    startup.ws = null;
+  }
+  if (startup.micStream) {
+    startup.micStream.getTracks().forEach(t => t.stop());
+    startup.micStream = null;
+  }
+  if (startup.ctx) { startup.ctx.close().catch(() => {}); startup.ctx = null; }
+  if (!startup.cameraReleased) {
+    sharedCamera.release(startup.cameraOwner);
+    startup.cameraReleased = true;
+  }
+}
+
 async function startVoiceMode(){
   if (rt || rtStarting) return;
   const generation = ++rtStartGeneration;
-  rtStarting = true; $('voice-mode').disabled = true;
+  const startup = {generation, cameraOwner: 'voice-' + generation, ws: null, micStream: null, ctx: null, cameraReleased: false};
+  const isCurrent = () => rtStarting === startup && generation === rtStartGeneration;
+  rtStarting = startup; $('voice-mode').disabled = true;
   try {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
       setStatus('chat', 'mic needs HTTPS — open the https:// address', 'err'); return;
@@ -1792,13 +1816,16 @@ async function startVoiceMode(){
     let cfg;
     try { cfg = await getJSON('/api/config'); }
     catch (e) { setStatus('chat', 'config unavailable: ' + e.message, 'err'); return; }
+    if (!isCurrent()) return;
     if (!cfg.realtime || !cfg.realtime.enabled){ setStatus('chat', 'realtime API disabled in config', 'err'); return; }
     await refreshCueBank();
+    if (!isCurrent()) return;
     const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
     const tok = cfg.realtime.token ? ('?token=' + encodeURIComponent(cfg.realtime.token)) : '';
     let ws, micStream, cameraMedia, ctx, wsFailedEarly = false, preMsgs = [];
     try {
       ws = new WebSocket(scheme + '://' + location.hostname + ':' + cfg.realtime.port + '/v1/realtime' + tok);
+      startup.ws = ws;
       // Buffer messages until the operational handler is attached below — the
       // server emits session.created immediately on connect, and the mic/worklet
       // awaits that follow would otherwise drop it on a listener-less socket.
@@ -1806,22 +1833,22 @@ async function startVoiceMode(){
       ws.onerror = () => { wsFailedEarly = true; setStatus('chat', 'voice connection failed', 'err'); };
       ws.onclose = () => { wsFailedEarly = true; setStatus('chat', 'voice connection closed — check realtime server/token', 'err'); };
       const audioSpec = {echoCancellation: true, noiseSuppression: true, channelCount: 1};
-      const camera = sharedCamera.acquire('voice').catch(() => null);
+      const camera = sharedCamera.acquire(startup.cameraOwner).catch(() => null);
       micStream = await navigator.mediaDevices.getUserMedia({audio: audioSpec});
+      startup.micStream = micStream;
+      if (!isCurrent()) { cleanupVoiceStartup(startup); return; }
       cameraMedia = await camera;
+      if (!isCurrent()) { cleanupVoiceStartup(startup); return; }
       ctx = new AudioContext();
+      startup.ctx = ctx;
       await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([RT_WORKLET], {type: 'text/javascript'})));
     } catch (e) {
-      if (ws) { try { ws.onclose = null; ws.close(); } catch (_) {} }
-      if (micStream) micStream.getTracks().forEach(t => t.stop());
-      sharedCamera.release('voice');
-      if (ctx) ctx.close().catch(() => {});
-      setStatus('chat', 'mic blocked: ' + e.message, 'err'); return;
+      cleanupVoiceStartup(startup);
+      if (isCurrent()) setStatus('chat', 'mic blocked: ' + e.message, 'err');
+      return;
     }
-    if (generation !== rtStartGeneration || wsFailedEarly || ws.readyState > 1) {
-      micStream.getTracks().forEach(t => t.stop());
-      sharedCamera.release('voice');
-      ctx.close().catch(() => {});
+    if (!isCurrent() || wsFailedEarly || ws.readyState > 1) {
+      cleanupVoiceStartup(startup);
       return;
     }
     const node = new AudioWorkletNode(ctx, 'pcm16-capture');
@@ -1829,7 +1856,7 @@ async function startVoiceMode(){
       if (ws.readyState === 1) ws.send(JSON.stringify({type: 'input_audio_buffer.append', audio: rtB64FromBuffer(e.data)}));
     };
     ctx.createMediaStreamSource(micStream).connect(node);
-    rt = {ws, ctx, micStream, node, playhead: 0, sources: [], outRate: 24000, userLine: '', replyLine: ''};
+    rt = {ws, ctx, micStream, node, cameraOwner: startup.cameraOwner, playhead: 0, sources: [], outRate: 24000, userLine: '', replyLine: ''};
     rt.pendingCall = null; rt.video = cameraMedia && cameraMedia.video;
     rt.presence = new RealtimePresenceController({
       send: rtSend,
@@ -1845,15 +1872,22 @@ async function startVoiceMode(){
     $('voice-mode').classList.add('recording');
     setEntityState('ready'); setStatus('chat', rt.video ? 'hands-free — just talk; Richard can look through the webcam' : 'hands-free — just talk', '');
   } finally {
-    rtStarting = false; $('voice-mode').disabled = false;
+    if (rtStarting === startup) {
+      rtStarting = null;
+      $('voice-mode').disabled = false;
+    }
   }
 }
 
 function stopVoiceMode(){
   ++rtStartGeneration;
-  sharedCamera.release('voice');
-  if (!rt) { rtStarting = false; $('voice-mode').disabled = false; return; }
+  if (rtStarting) {
+    const startup = rtStarting; rtStarting = null;
+    cleanupVoiceStartup(startup);
+  }
+  if (!rt) { $('voice-mode').disabled = false; return; }
   const r = rt;
+  sharedCamera.release(r.cameraOwner);
   rtFlushPlayback(r); r.presence.disconnect();
   rt = null;
   try { r.ws.onclose = null; r.ws.close(); } catch (_) {}

@@ -127,7 +127,12 @@
       const state = this.playbacks.get(responseId);
       if (!state) return false;
       state.count = Math.max(0, state.count - 1);
+      if (state.count === 0) {
+        this.silenceSince = this.now();
+        this.cuePlayedInGap = false;
+      }
       this._finishPlayback(responseId, state);
+      this._arm();
       return true;
     }
 
@@ -135,6 +140,8 @@
       const state = this.playbacks.get(responseId);
       if (!state) return false;
       state.count = 0;
+      this.silenceSince = this.now();
+      this.cuePlayedInGap = false;
       if (state.playing) {
         state.playing = false;
         this.send({type: 'playback.update', response_id: responseId, playing: false});
@@ -161,6 +168,7 @@
       this.waiting = false;
       this._cancelTimer();
       this._stopCue();
+      if (this.active) this.active.terminal = true;
       for (const [responseId, state] of this.playbacks) {
         if (state.playing) this.realAudioFlushed(responseId);
       }
@@ -197,12 +205,20 @@
     _arm() {
       if (this.timer || this.cue || !this.waiting || this.waitInvalid || !this.active
           || this.active.unsolicited || this.cuePlayedInGap
-          || this.turnCueCount >= MAX_CUES_PER_TURN || !this._clips().length) return;
+          || this.turnCueCount >= MAX_CUES_PER_TURN || this._hasAudiblePlayback()
+          || !this._clips().length) return;
       const due = Math.max(this.silenceSince + WAIT_MS, this.lastCueAt + CUE_SPACING_MS);
       this.timer = this.setTimeout(() => {
         this.timer = null;
         this._playCue();
       }, Math.max(0, due - this.now()));
+    }
+
+    _hasAudiblePlayback() {
+      for (const state of this.playbacks.values()) {
+        if (state.count > 0) return true;
+      }
+      return false;
     }
 
     _playCue() {

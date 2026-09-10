@@ -236,3 +236,106 @@ $ .venv/bin/python -B -m pytest -q -p no:cacheprovider tests/test_web_assets.py
 - The real-browser fixture and listening/timing check are owned by the controller and
   remain outside this task's repository paths. Prepared clips were not synthesized
   and no production LLM prompt or service was used here.
+
+## Review fix round 1
+
+The task reviewer confirmed three adversarial ownership gaps. Tool/vision activity
+could arm a cue while real PCM was still queued because the cue scheduler did not
+consult source counts or begin a new silence interval at final drain. Speech/typed
+interruption released playback but left the old response and pending client camera
+call eligible for late events. Finally, stopping and immediately restarting voice
+while camera acquisition was unresolved let stale cleanup release the replacement's
+same-name camera owner, left the stale WebSocket open, and allowed the stale
+`finally` block to overwrite newer startup state.
+
+Focused RED before production changes:
+
+```text
+$ node --test --test-name-pattern='queued real PCM|speech interruption retires|stale voice startup' tests/browser/*.test.cjs
+✖ queued real PCM blocks a tool cue until a fresh 1200 ms gap after drain
+✖ speech interruption retires the response and clears its pending camera call before a replacement exists
+✖ stale voice startup cannot release or leak into a replacement startup
+ℹ tests 3
+ℹ pass 0
+ℹ fail 3
+ℹ duration_ms 241.518167
+```
+
+The failures reproduced the review exactly: one cue played over outstanding PCM,
+late text changed `replyLine` to `ghost` after speech interruption, and the stale
+socket remained open (`readyState` 1 instead of 3), leaving the camera-owner race
+reachable.
+
+The controller now treats any positive real-source count as audible playback. The
+final source drain records the start of a fresh silence interval and rearms eligible
+tool/vision waiting only from that boundary; backend playback acknowledgement may
+remain owned until `response.done`. Speech marks the active response terminal before
+releasing playback. The SPA uses one interruption helper to stop audio and clear
+response-owned `pendingCall`/`replyLine`, so late events are rejected even before a
+replacement `response.created` arrives.
+
+Each voice startup now owns a unique camera key plus its own WebSocket, microphone,
+and audio-context record. Stop closes and releases that record immediately. Stale
+continuations clean only their own resources, stale branches close their socket, and
+`finally` clears the UI/start marker only when it still owns the current startup.
+
+Focused GREEN:
+
+```text
+$ node --test --test-name-pattern='queued real PCM|speech interruption retires|stale voice startup' tests/browser/*.test.cjs
+✔ queued real PCM blocks a tool cue until a fresh 1200 ms gap after drain
+✔ speech interruption retires the response and clears its pending camera call before a replacement exists
+✔ stale voice startup cannot release or leak into a replacement startup
+ℹ tests 3
+ℹ pass 3
+ℹ fail 0
+ℹ duration_ms 225.518042
+```
+
+Requested covering runs:
+
+```text
+$ node --test tests/browser/*.test.cjs
+ℹ tests 27
+ℹ pass 27
+ℹ fail 0
+ℹ duration_ms 733.450041
+
+$ .venv/bin/python -B -m pytest -q -p no:cacheprovider tests/test_web.py tests/test_web_assets.py
+100 passed in 0.90s
+```
+
+`git diff --check` again produced no output. The review's Minor note that fully
+completed/drained playback map entries live until disconnect is deferred to final
+branch review as directed; it does not affect the three fixed ownership boundaries.
+
+The controller requested explicit same-turn cross-response coverage after the fix:
+`r1` reaches `response.done` with PCM still queued, `r2` starts a tool continuation,
+and the cue must wait for `r1`'s final source drain plus a new 1200 ms gap. A temporary
+active-response-only mutation proved the regression can catch the bug:
+
+```text
+$ node --test --test-name-pattern='prior response PCM' tests/browser/realtime_client.test.cjs
+✖ prior response PCM blocks a same-turn continuation cue until its drain
+ℹ tests 1
+ℹ pass 0
+ℹ fail 1
+ℹ duration_ms 96.591875
+```
+
+Restoring the all-owned-playbacks gate produced:
+
+```text
+$ node --test --test-name-pattern='prior response PCM' tests/browser/realtime_client.test.cjs
+✔ prior response PCM blocks a same-turn continuation cue until its drain
+ℹ tests 1
+ℹ pass 1
+ℹ fail 0
+ℹ duration_ms 61.166167
+
+$ node --test tests/browser/*.test.cjs
+ℹ tests 28
+ℹ pass 28
+ℹ fail 0
+ℹ duration_ms 789.419667
+```

@@ -186,6 +186,39 @@ test('playback completion waits for response.done and every scheduled source', (
   assert.deepEqual(h.sent.at(-1), {type: 'playback.update', response_id: 'r1', playing: false});
 });
 
+test('queued real PCM blocks a tool cue until a fresh 1200 ms gap after drain', () => {
+  const h = harness();
+  begin(h);
+  h.controller.realAudioScheduled('r1');
+  h.controller.activity({response_id: 'r1', turn_id: 't1', phase: 'tool', unsolicited: false});
+  h.clock.advance(20_000);
+  assert.equal(h.played.length, 0);
+
+  h.controller.realAudioEnded('r1');
+  h.clock.advance(1199);
+  assert.equal(h.played.length, 0);
+  h.clock.advance(1);
+  assert.equal(h.played[0].clip.phase, 'thinking');
+  assert.deepEqual(h.sent, [{type: 'playback.update', response_id: 'r1', playing: true}]);
+});
+
+test('prior response PCM blocks a same-turn continuation cue until its drain', () => {
+  const h = harness();
+  begin(h, 'r1', 'turn');
+  h.controller.realAudioScheduled('r1');
+  h.controller.responseDone({id: 'r1', status: 'completed'});
+  h.controller.responseCreated({id: 'r2', turn_id: 'turn', unsolicited: false});
+  h.controller.activity({response_id: 'r2', turn_id: 'turn', phase: 'tool', unsolicited: false});
+  h.clock.advance(20_000);
+  assert.equal(h.played.length, 0);
+
+  h.controller.realAudioEnded('r1');
+  h.clock.advance(1199);
+  assert.equal(h.played.length, 0);
+  h.clock.advance(1);
+  assert.equal(h.played[0].clip.phase, 'thinking');
+});
+
 test('speech releases acknowledged playback even when its last source already ended', () => {
   const h = harness();
   begin(h);
@@ -193,6 +226,7 @@ test('speech releases acknowledged playback even when its last source already en
   h.controller.realAudioEnded('r1');
   h.controller.speechStarted();
   assert.deepEqual(h.sent.at(-1), {type: 'playback.update', response_id: 'r1', playing: false});
+  assert.equal(h.controller.accepts('r1'), false);
 });
 
 test('changing bank identity stops an old-voice cue and missing bank stays silent', () => {

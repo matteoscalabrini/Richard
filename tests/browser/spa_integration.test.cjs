@@ -187,7 +187,7 @@ function createHarness(options = {}) {
   document.getElementById('chat-input').value = '';
   const cameraPending = options.cameraPending || deferred();
   const cameraTrack = makeTrack('video');
-  const micTrack = makeTrack('audio');
+  const micTracks = [];
   const mediaCalls = [];
   const framePosts = [];
   const frameReplies = [];
@@ -202,7 +202,7 @@ function createHarness(options = {}) {
     if (url === '/api/home-assistant') return response({connected: false, entities: [], domains: {}, enabled: false});
     if (url === '/api/control-loops') return response({control_loops: []});
     if (url === '/api/control-loop-notifications') return response({notifications: []});
-    if (url === '/api/perception/status') return response({enabled: true, sources: [], presence: [], gallery: []});
+    if (url === '/api/perception/status') return response({enabled: options.perceptionEnabled !== false, sources: [], presence: [], gallery: []});
     if (url === '/api/perception/frame') {
       framePosts.push(JSON.parse(init.body));
       return frameReplies.length ? frameReplies.shift().promise : response({ok: true});
@@ -213,7 +213,8 @@ function createHarness(options = {}) {
   const navigator = {mediaDevices: {getUserMedia: constraints => {
     mediaCalls.push(constraints);
     if (constraints.video) return cameraPending.promise;
-    return Promise.resolve(new FakeStream([micTrack]));
+    const track = makeTrack('audio'); micTracks.push(track);
+    return Promise.resolve(new FakeStream([track]));
   }}};
   const intervals = [];
   const windowListeners = new Map();
@@ -258,7 +259,7 @@ function createHarness(options = {}) {
   };`;
   vm.runInContext(renderedSpaScript() + exports, sandbox, {filename: 'rendered-spa.js'});
   return {
-    sandbox, document, elements, cameraPending, cameraTrack, micTrack, mediaCalls,
+    sandbox, document, elements, cameraPending, cameraTrack, micTracks, mediaCalls,
     framePosts, frameReplies, fetchCalls, intervals,
     resolveCamera() { cameraPending.resolve(new FakeStream([cameraTrack])); },
     async settle() { await new Promise(resolve => setImmediate(resolve)); await new Promise(resolve => setImmediate(resolve)); },
@@ -368,6 +369,49 @@ test('late text, tool, truncation, and done events cannot take over a newer resp
   assert.equal(h.sandbox.__spa.getRt().presence.accepts('new'), true);
 });
 
+test('speech interruption retires the response and clears its pending camera call before a replacement exists', async () => {
+  const h = createHarness();
+  const voice = h.sandbox.__spa.startVoiceMode();
+  await h.settle(); h.resolveCamera(); await voice;
+  const ws = FakeWebSocket.instances[0];
+  ws.emit({type: 'session.created', session: {output_audio_samplerate: 24000}});
+  ws.emit({type: 'response.created', response: {id: 'old', turn_id: 'old-turn', unsolicited: false}});
+  ws.emit({type: 'response.function_call_arguments.done', response_id: 'old', call_id: 'old-call', name: 'camera', arguments: '{}'});
+  ws.emit({type: 'input_audio_buffer.speech_started'});
+  const sentAtInterruption = ws.sent.length;
+  ws.emit({type: 'response.output_text.delta', response_id: 'old', delta: 'ghost'});
+  ws.emit({type: 'response.audio.delta', response_id: 'old', delta: 'AQAAAA=='});
+  ws.emit({type: 'response.done', response: {id: 'old', status: 'completed'}});
+
+  assert.equal(h.sandbox.__spa.getRt().presence.accepts('old'), false);
+  assert.equal(h.sandbox.__spa.getRt().pendingCall, null);
+  assert.equal(h.sandbox.__spa.getRt().replyLine, '');
+  assert.equal(ws.sent.length, sentAtInterruption);
+});
+
+test('stale voice startup cannot release or leak into a replacement startup', async () => {
+  const h = createHarness({perceptionEnabled: false});
+  const stale = h.sandbox.__spa.startVoiceMode();
+  await h.settle();
+  const staleSocket = FakeWebSocket.instances[0];
+  const staleMic = h.micTracks[0];
+  h.sandbox.__spa.stopVoiceMode();
+
+  const replacement = h.sandbox.__spa.startVoiceMode();
+  await h.settle();
+  const replacementSocket = FakeWebSocket.instances[1];
+  const replacementMic = h.micTracks[1];
+  h.resolveCamera();
+  await Promise.all([stale, replacement]);
+
+  assert.equal(staleSocket.readyState, 3);
+  assert.equal(staleMic.readyState, 'ended');
+  assert.equal(replacementSocket.readyState, 1);
+  assert.equal(replacementMic.readyState, 'live');
+  assert.equal(h.cameraTrack.readyState, 'live');
+  assert.equal(h.sandbox.__spa.getRt().ws, replacementSocket);
+});
+
 test('camera permission failure preserves a negotiated voice-only session', async () => {
   const h = createHarness();
   const voice = h.sandbox.__spa.startVoiceMode();
@@ -379,7 +423,7 @@ test('camera permission failure preserves a negotiated voice-only session', asyn
   const update = ws.sent.find(message => message.type === 'session.update');
 
   assert.equal(h.sandbox.__spa.getRt().video, null);
-  assert.equal(h.sandbox.__spa.getRt().micStream.getAudioTracks()[0], h.micTrack);
+  assert.equal(h.sandbox.__spa.getRt().micStream.getAudioTracks()[0], h.micTracks[0]);
   assert.equal(update.session.visual_context, false);
   assert.deepEqual(update.session.tools, []);
 });
