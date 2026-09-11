@@ -23,7 +23,7 @@
 - Every change is TDD: failing test first, minimal code, suite green, commit. Suite: `.venv/bin/python -m pytest -q` from `/Users/matteo/Documents/GitHub/Richard/.worktrees/reachy-presence`, branch `reachy-presence`. Baseline: 560 passed, 2 skipped, 3 deselected at 16218e5.
 - Commit messages: imperative subject, a body that says why, trailer `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`.
 - Before any push to `public`: run the private-string check from the memory `richard-public-push-check`; it must print nothing.
-- The Reachy-folder workflow (Task 10) sends synthesis requests to the Qwen3-TTS server on CT123 (GPU1, Richard's card) and uploads one voice there. That is within the standing Richard authorisation; announce it in the session and do not touch CT111.
+- The Reachy-folder workflow (Task 10) sends synthesis requests to the Qwen3-TTS server on the box (GPU1, Richard's card) and uploads one voice there. That is within the standing Richard authorisation; announce it in the session and do not touch the LLM box.
 
 ---
 
@@ -1675,10 +1675,10 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 - Output: `/Users/matteo/Documents/GitHub/Reachy/voice-refs/claptrap/clap1v.wav`, `clap1v.txt`; `/Users/matteo/Documents/GitHub/Reachy/samples/claptrap-v2/*.wav`
 
 **Interfaces:**
-- Consumes: `richard.voice.effects.RobotEffect` (Task 1) through the Richard worktree venv; the TTS server on CT123 at `http://10.99.97.202:8091` (`/v1/audio/voices`, `/v1/audio/speech`).
+- Consumes: `richard.voice.effects.RobotEffect` (Task 1) through the Richard worktree venv; the TTS server on the box at `http://<tts-host>:8091` (`/v1/audio/voices`, `/v1/audio/speech`).
 - Produces: voice `clap1v` on the server; sixteen sample files `{clap1,clap1v}_{plain,robot30,robot50,robot70}_{it,en}.wav`.
 
-Announce in the session before step 3: "sending synthesis requests and one voice upload to the Qwen3-TTS server on CT123 (GPU1); CT111 untouched."
+Announce in the session before step 3: "sending synthesis requests and one voice upload to the Qwen3-TTS server on the box (GPU1); the LLM box untouched."
 
 - [ ] **Step 1: Write `clean.sh`**
 
@@ -1752,7 +1752,7 @@ def write_wav(path: Path, pcm: bytes, samplerate: int) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--server", default="http://10.99.97.202:8091")
+    parser.add_argument("--server", default="http://<tts-host>:8091")
     parser.add_argument("--voices", nargs="+", default=["clap1", "clap1v"])
     parser.add_argument("--strengths", nargs="+", type=int, default=[30, 50, 70])
     parser.add_argument("--tone", type=float, default=40.0)
@@ -1782,20 +1782,20 @@ Announce, then:
 
 ```bash
 cd /Users/matteo/Documents/GitHub/Reachy/voice-refs/claptrap
-curl -s -m 120 -X POST http://10.99.97.202:8091/v1/audio/voices \
+curl -s -m 120 -X POST http://<tts-host>:8091/v1/audio/voices \
   -F "audio_sample=@clap1v.wav" -F "consent=matteo-owner-2026-09-09" \
   -F "name=clap1v" -F "ref_text=$(cat clap1v.txt)"; echo
-curl -s http://10.99.97.202:8091/v1/audio/voices | python3 -c "import sys,json; print(json.load(sys.stdin)['voices'])"
+curl -s http://<tts-host>:8091/v1/audio/voices | python3 -c "import sys,json; print(json.load(sys.stdin)['voices'])"
 /Users/matteo/Documents/GitHub/Richard/.worktrees/reachy-presence/.venv/bin/python \
   /Users/matteo/Documents/GitHub/Reachy/scripts/render_voice_samples.py --voices clap1 clap1v
 ls /Users/matteo/Documents/GitHub/Reachy/samples/claptrap-v2/
 ```
 
-Expected: `clap1v` in the voice list; 16 wav files. Listen to `clap1_plain_it` against `clap1v_plain_it` for the noise, and the three robot strengths for character. Report the file list to Matteo; the choice is his. Nothing on CT123's Richard config changes in this task.
+Expected: `clap1v` in the voice list; 16 wav files. Listen to `clap1_plain_it` against `clap1v_plain_it` for the noise, and the three robot strengths for character. Report the file list to Matteo; the choice is his. Nothing on the box's Richard config changes in this task.
 
 - [ ] **Step 4: Record**
 
-Append one line to the CT123 `/root/CHANGELOG.md` through `rbox` ("2026-09-09: uploaded voice clap1v (demucs-cleaned clap1) to qwen3-tts; comparison samples rendered from the Mac"), then on the Mac `~/Documents/GitHub/inference-box/bin/pull-box-docs` and commit in the inference-box repo. Nothing to commit in Richard for this task.
+Append one line to the box's `/root/CHANGELOG.md` through the box ssh helper ("2026-09-09: uploaded voice clap1v (demucs-cleaned clap1) to qwen3-tts; comparison samples rendered from the Mac"), then on the Mac `~/Documents/GitHub/the box-docs repo/bin/pull-box-docs` and commit in the the box-docs repo repo. Nothing to commit in Richard for this task.
 
 ---
 
@@ -1834,10 +1834,10 @@ Then the private-string check (memory `richard-public-push-check`) must print no
 Restarting `richard.service` drops his live session. When he says go:
 
 ```bash
-~/Documents/GitHub/inference-box/bin/rbox 'cd /opt/richard && git pull --ff-only && .venv/bin/pip install -e . -q && systemctl restart richard && sleep 8 && systemctl is-active richard && .venv/bin/richard plugins list'
+ssh <box> 'cd /opt/richard && git pull --ff-only && .venv/bin/pip install -e . -q && systemctl restart richard && sleep 8 && systemctl is-active richard && .venv/bin/richard plugins list'
 ```
 
-Then one spoken turn through the web UI, then set the chosen voice and effect on CT123 (`richard config`, or the Voice page followed by Restart), one dated line in CT123's `/root/CHANGELOG.md`, `pull-box-docs`, commit in inference-box.
+Then one spoken turn through the web UI, then set the chosen voice and effect on the box (`richard config`, or the Voice page followed by Restart), one dated line in the box's `/root/CHANGELOG.md`, `pull-box-docs`, commit in the box-docs repo.
 
 ---
 

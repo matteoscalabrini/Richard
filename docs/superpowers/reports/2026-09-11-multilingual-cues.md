@@ -71,7 +71,7 @@ The browser was returned to about:blank and the exact fixture process stopped.
 
 ## Deployment
 
-Public `reachy-presence` and CT123 `/opt/richard` fast-forwarded from `a169eb8` to
+Public `reachy-presence` and the box's `/opt/richard` fast-forwarded from `a169eb8` to
 `b8d9a54c5d85cc53a354f7b79943ca7479338c3e`, with clean checkouts. Public outgoing
 tree and diff scans passed. Richard restarted at **08:05:33 UTC**; Qwen3-TTS
 retained its **2026-09-08 14:41:10 UTC** start timestamp.
@@ -98,7 +98,7 @@ fingerprints computed directly from that configuration.
 WAVs and per-clip technical metrics are under
 `samples/multilingual-cues-2026-09-11/{en,it}/`. These checks establish valid audio,
 not pronunciation or perceived naturalness. No production LLM prompt was sent;
-CT111 configuration, resident model and power caps were unchanged.
+The LLM box's configuration, resident model and power caps were unchanged.
 
 Reload the browser to use **Configuration → Voice → Regenerate waiting phrases**.
 Saving relevant settings schedules missing banks; forcing regeneration replaces
@@ -106,8 +106,8 @@ audio even when the reference file changed under the same voice ID. Preparation
 queues while voice mode is open and resumes when it closes. Vector retrieval is
 still paused.
 
-CT123 changelog and current configuration snapshot were pulled and archived in
-inference-box commit `46fc611`, pushed on `software-headroom-20260908`. The only
+The box's changelog and current configuration snapshot were pulled and archived in
+a private box-docs commit `46fc611`, pushed on `software-headroom-20260908`. The only
 configuration snapshot difference was the voice name already present at preflight;
 this deployment made no configuration edit. Final passive box status showed
 production Qwen ready. Unrelated untracked files were preserved, personal memory

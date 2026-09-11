@@ -5,7 +5,7 @@ amendments: a voice-sample upload on the Voice page, and no deeper menu nesting)
 
 ## Goal
 
-Two things Matteo asked for after the first live test of Richard on CT123:
+Two things Matteo asked for after the first live test of Richard on the box:
 
 1. The Claptrap voice (`clap1`, x-vector mode) is noisy and not robotic enough. Richard gets
    a robot effect applied to every synthesized sentence, tunable from the web UI, and the
@@ -146,13 +146,13 @@ Script `Reachy/voice-refs/claptrap/clean.sh` and `Reachy/scripts/render_voice_sa
    Mac; a 146 s clip takes one to two minutes). Output: the vocals stem.
 2. Cut the same window as `clap1` (8.6–20.9 s) from the vocals stem, mono, 24 kHz,
    ffmpeg `loudnorm`. Result `clap1v.wav`, transcript reused from `clap1.txt`.
-3. Upload to the TTS server on CT123 as voice `clap1v` (x-vector mode, task type Base) with
+3. Upload to the TTS server on the box as voice `clap1v` (x-vector mode, task type Base) with
    the same consent string convention as the earlier uploads.
 4. Render the two Italian and English sample lines used on 2026-09-08 for `clap1` and
    `clap1v`, plain and with the robot effect at strengths 30, 50 and 70 (tone 40 Hz), using the
    effect module from the Richard worktree. Files:
    `Reachy/samples/claptrap-v2/{clap1,clap1v}_{plain,robot30,robot50,robot70}_{it,en}.wav`.
-5. Matteo picks by ear. Only then does CT123's config change (`tts_voice`, `tts_effect*`).
+5. Matteo picks by ear. Only then does the box's config change (`tts_voice`, `tts_effect*`).
 
 ## 8. Tests
 
@@ -171,7 +171,7 @@ Script `Reachy/voice-refs/claptrap/clean.sh` and `Reachy/scripts/render_voice_sa
 
 ## 9. Deploy
 
-Together with spec zero: pull on CT123, restart `richard.service` on Matteo's go (it drops the
+Together with spec zero: pull on the box, restart `richard.service` on Matteo's go (it drops the
 live session), then `richard plugins list` and one spoken turn through the web UI as the check.
 
 ## Out of scope

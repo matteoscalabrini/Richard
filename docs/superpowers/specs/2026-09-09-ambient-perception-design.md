@@ -43,7 +43,7 @@ observations need spec two (memory provenance); when to speak is spec four (init
   the LAN.
 - Richard's core has no image codec (numpy only) and `onnxruntime` is already a dependency of the
   `voice` extra (Silero VAD). This spec adds a `perception` extra: `Pillow` (decode, resize, crop)
-  and `onnxruntime`; models are fetched on first use like Silero (`ensure_*`). GPU1 on CT123 has
+  and `onnxruntime`; models are fetched on first use like Silero (`ensure_*`). GPU1 on the box has
   about 12 GB free; CPU first (16 cores), GPU when a measurement says so.
 - Detector costs (class figures, to be measured in the plan): frame differencing on a 160x90 grey
   image is microseconds; a nano person detector at 320 px is 30-60 ms on CPU, ~5 ms on GPU; a face
@@ -189,7 +189,7 @@ runs locally).
   provider's `ToolResult` path in the engine (history shape identical to the client-tool path);
   the plugin contract (`event_sources` start/stop); web endpoints (frame in, events out, gallery
   CRUD, thumbnails); a replay test from a directory of frames producing a known event sequence.
-- Live: browser stream on CT123, walk in and out of the webcam's view, watch the event log; then
+- Live: browser stream on the box, walk in and out of the webcam's view, watch the event log; then
   the robot's WebRTC stream and the dual-consumer check.
 
 ## Order of work

@@ -2347,9 +2347,9 @@ right after it:
   voice mode; the brain sees the picture as an OpenAI content part. See [`docs/vision.md`](docs/vision.md).
 ```
 
-- [ ] **Step 3: Note the CT123 smoke script change**
+- [ ] **Step 3: Note the box's smoke script change**
 
-`/root/work/scripts/realtime_smoke.py` on CT123 (snapshot in `~/Documents/GitHub/inference-box/box/lxc123/work/scripts/realtime_smoke.py`) sends a typed `conversation.item.create` and expects a turn. After deploy it needs one more line after the item: `ws.send(json.dumps({"type": "response.create"}))`. Do that edit on CT123 at deploy time (not in this repo); add the reminder to the deploy checklist in the handoff.
+`/root/work/scripts/realtime_smoke.py` on the box (snapshot in the private box-docs repo) sends a typed `conversation.item.create` and expects a turn. After deploy it needs one more line after the item: `ws.send(json.dumps({"type": "response.create"}))`. Do that edit on the box at deploy time (not in this repo); add the reminder to the deploy checklist in the handoff.
 
 - [ ] **Step 4: Run the full suite**
 
@@ -2372,7 +2372,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 Restarting `richard.service` drops his live session: ask first.
 
 ```bash
-~/Documents/GitHub/inference-box/bin/rbox 'cd /opt/richard && git pull --ff-only && /root/.local/bin/uv pip install --python .venv/bin/python -e . && systemctl restart richard'
+ssh <box> 'cd /opt/richard && git pull --ff-only && /root/.local/bin/uv pip install --python .venv/bin/python -e . && systemctl restart richard'
 ```
 
-Then: (1) web chat with an attached picture ("what is this?"); (2) voice mode, "what am I holding?" → Richard says he will look, the entity shows "looking…", the answer describes the webcam frame; (3) `journalctl -u richard | grep 'vision:'` shows the image and client-call lines; (4) fix the CT123 smoke script (Task 13, step 3); (5) one dated line in `/root/CHANGELOG.md`, then `bin/pull-box-docs` and a path-scoped commit in `inference-box` (never `git add -A` there). The robot test waits for spec one.
+Then: (1) web chat with an attached picture ("what is this?"); (2) voice mode, "what am I holding?" → Richard says he will look, the entity shows "looking…", the answer describes the webcam frame; (3) `journalctl -u richard | grep 'vision:'` shows the image and client-call lines; (4) fix the box's smoke script (Task 13, step 3); (5) one dated line in `/root/CHANGELOG.md`, then `bin/pull-box-docs` and a path-scoped commit in `the box-docs repo` (never `git add -A` there). The robot test waits for spec one.

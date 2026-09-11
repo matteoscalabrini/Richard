@@ -342,8 +342,8 @@ def test_plugins_default_empty_and_table_creates_on_demand():
     config = Config()
     assert config.plugins.enabled == []
     assert config.plugins.tables == {}
-    config.plugins.table("reachy")["host"] = "10.99.77.5"
-    assert config.plugins.tables == {"reachy": {"host": "10.99.77.5"}}
+    config.plugins.table("reachy")["host"] = "reachy-mini.local"
+    assert config.plugins.tables == {"reachy": {"host": "reachy-mini.local"}}
 
 
 def test_default_plugins_dir(monkeypatch, tmp_path):

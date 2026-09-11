@@ -108,7 +108,7 @@ followed by `response.done` (status `completed`). The app waits for that `respon
 posting the output.
 
 Removed behaviour: a text item no longer runs a turn by itself. The browser voice mode never used
-it; the CT123 smoke scripts (`realtime_smoke.py`, `realtime_spoken*.py`) get one `response.create`
+it; the box's smoke scripts (`realtime_smoke.py`, `realtime_spoken*.py`) get one `response.create`
 line. `docs/realtime-api.md` is updated; no compatibility mode (spec one's rule).
 
 A new user turn from speech seals dangling client calls before the transcript is appended, so a
@@ -200,7 +200,7 @@ text and audio deltas → `response.done`.
   the connection.
 - Web: `_conversation_from_messages` with parts and rejection; `/api/chat` SSE with an image;
   `/api/voice` with an attached image.
-- Live (Matteo's go, CT123): a picture from the web UI in typed chat; voice mode "what am I
+- Live (Matteo's go, on the box): a picture from the web UI in typed chat; voice mode "what am I
   holding?" → Richard calls `camera`, the browser posts the webcam frame, Richard answers. The
   robot after spec one (it cannot hear Richard until the audio vocabulary lands).
 

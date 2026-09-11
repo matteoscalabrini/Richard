@@ -14,7 +14,7 @@ The physical Reachy app and SDK are outside this change.
 
 - Richard worktree: `reachy-presence`, baseline `0577aff`.
 - Fresh baseline suite: 769 passed, 2 skipped, 3 deselected.
-- CT123 still served `0577aff` during read-only preparation; both Richard and TTS
+- The box still served `0577aff` during read-only preparation; both Richard and TTS
   services were active. No inference prompt was sent.
 - The actual baseline SPA was opened in Chrome against the local synthetic
   fixture. Ambient perception opened one video capture. Starting hands-free mode
@@ -248,7 +248,7 @@ test was required by the reviewer. Task and final review ledgers are complete.
 
 ## Deployment on 2026-09-11
 
-- Public `reachy-presence` and CT123 `/opt/richard` fast-forwarded from `0577aff`
+- Public `reachy-presence` and the box's `/opt/richard` fast-forwarded from `0577aff`
   to `a169eb813530f336131fb1453728205f1ca59801`; both checkouts clean.
 - Richard restarted at **06:58:20 UTC**. The Qwen3-TTS service retained its
   original active timestamp, **2026-09-08 14:41:10 UTC**; no restart was needed.
@@ -266,7 +266,7 @@ test was required by the reviewer. Task and final review ledgers are complete.
   were preserved; physical Reachy and vector retrieval remain outside this work.
 - Restart/reload creates a fresh browser session. Voice-active typed input uses
   that same session and its replies are spoken, as recorded in the ruling above.
-- The CT123 dated changelog was pulled and archived in inference-box commit
+- The box's dated changelog was pulled and archived in a private box-docs commit
   `e43dc60`, pushed on `software-headroom-20260908`. Personal deployment memory and
   coordination were updated; the shared index window is released. Final passive
   box status showed the production model ready, with existing services resident.
