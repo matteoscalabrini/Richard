@@ -489,7 +489,7 @@ SPA_HTML = r"""<!DOCTYPE html>
     <section class="drawer-page" data-drawer-page="voice" hidden>
       <button type="button" class="drawer-back" data-drawer-back="configuration">‹ Back to configuration</button>
       <div class="drawer-title" tabindex="-1"><b>&gt; VOICE</b><span>system.voice</span></div>
-      <div class="drawer-page-body" data-panel-content="voice-stt-content voice-tts-content voice-sample-content voice-effect-content voice-turn-content voice-mic-content"></div>
+      <div class="drawer-page-body" data-panel-content="voice-stt-content voice-tts-content voice-cues-content voice-sample-content voice-effect-content voice-turn-content voice-mic-content"></div>
     </section>
 
     <section class="drawer-page" data-drawer-page="plugins" hidden>

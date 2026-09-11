@@ -1200,7 +1200,7 @@ def test_plugins_enable_unknown_name_is_404_and_bad_body_is_400(tmp_path):
 
 def test_web_ui_voice_page_has_sections_upload_and_effect(tmp_path):
     html = _app(tmp_path).handle("GET", "/").body.decode()
-    assert 'data-panel-content="voice-stt-content voice-tts-content voice-sample-content voice-effect-content voice-turn-content voice-mic-content"' in html
+    assert 'data-panel-content="voice-stt-content voice-tts-content voice-cues-content voice-sample-content voice-effect-content voice-turn-content voice-mic-content"' in html
     for element_id in (
         "voice.language", "voice.tts_model", "voice.tts_language", "voice.tts_instructions", "voice.tts_xvec_only",
         "voice.tts_task_type", "voice.tts_effect", "voice.tts_effect_strength", "voice.tts_effect_tone",

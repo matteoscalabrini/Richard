@@ -4,7 +4,7 @@ from __future__ import annotations
 import threading
 from copy import deepcopy
 
-from richard.realtime.cues import cue_fingerprint, cue_languages, prepare_cues, read_cues
+from richard.realtime.cues import _cache_directory, cue_fingerprint, cue_languages, prepare_cues, read_cues
 
 
 class _Superseded(Exception):
@@ -22,28 +22,51 @@ class CuePreparation:
         self._generation = 0
         self._key = None
         self._force = False
+        self._error_version = None
         self._status = {"state": "missing", "completed": 0, "total": 0}
 
     @staticmethod
     def _identity(config):
         return tuple(cue_fingerprint(config, lang) for lang in cue_languages(config))
 
+    def _bank_version(self, key):
+        """Recognize an externally republished bank, even with identical audio."""
+        versions = []
+        for fingerprint in key:
+            try:
+                stat = (_cache_directory(self.directory) / (fingerprint + ".json")).stat()
+                versions.append((stat.st_ino, stat.st_mtime_ns, stat.st_size))
+            except OSError:
+                versions.append(None)
+        return tuple(versions)
+
     def status(self, config):
         languages = cue_languages(config)
         key = self._identity(config)
         with self._lock:
-            if key == self._key and self._status["state"] in {"queued", "preparing", "error"}:
+            current = key == self._key
+            if current and self._status["state"] in {"queued", "preparing"}:
                 return {**self._status, "languages": list(languages)}
-        ready = sum(len(read_cues(config, self.directory, language=lang)["clips"]) for lang in languages)
-        total = 6 * len(languages)
-        return {"state": "unsupported" if not languages else "ready" if ready == total else "missing",
-                "completed": ready, "total": total, "languages": list(languages)}
+            ready = sum(len(read_cues(config, self.directory, language=lang)["clips"]) for lang in languages)
+            total = 6 * len(languages)
+            if current and self._status["state"] == "error":
+                if ready != total or self._bank_version(key) == self._error_version:
+                    return {**self._status, "languages": list(languages)}
+                self._status = {"state": "ready", "completed": ready, "total": total}
+            return {"state": "unsupported" if not languages else "ready" if ready == total else "missing",
+                    "completed": ready, "total": total, "languages": list(languages)}
 
     def request(self, config, *, force=False):
         snapshot = deepcopy(config)
         key = self._identity(snapshot)
         with self._lock:
-            if not key or self._closed.is_set():
+            if self._closed.is_set():
+                return self.status(snapshot)
+            if not key:
+                self._generation += 1
+                self._pending = None
+                self._key = key
+                self._status = {"state": "unsupported", "completed": 0, "total": 0}
                 return self.status(snapshot)
             if (key == self._key and self._status["state"] in {"queued", "preparing"}
                     and (not force or self._force)):
@@ -93,6 +116,7 @@ class CuePreparation:
             except Exception:
                 with self._lock:
                     if generation == self._generation:
+                        self._error_version = self._bank_version(self._key)
                         self._status.update(state="error", error="Could not prepare waiting phrases. Check the TTS service and retry.")
 
     def close(self):

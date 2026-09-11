@@ -162,3 +162,50 @@ def test_preparation_waits_for_voice_to_close_then_uses_latest_saved_settings(tm
         assert not cues.read_cues(first, tmp_path)["clips"]
     finally:
         manager.close()
+
+
+def test_unsupported_language_supersedes_an_entered_supported_job(tmp_path, monkeypatch):
+    from richard.realtime.cue_preparation import CuePreparation
+    entered, release = threading.Event(), threading.Event()
+    calls = []
+    class BlockingSynth(Synth):
+        def synth(self, text):
+            calls.append(text)
+            entered.set()
+            assert release.wait(2)
+            return super().synth(text)
+    monkeypatch.setattr("richard.cli._build_tts", lambda *args: BlockingSynth())
+    manager = CuePreparation(tmp_path)
+    original = config("en")
+    try:
+        manager.request(original)
+        assert entered.wait(1)
+        worker = manager._thread
+        assert manager.request(config("fr"))["state"] == "unsupported"
+        release.set()
+        worker.join(timeout=2)
+        assert not worker.is_alive()
+        assert len(calls) == 1, "only the already-entered clip may finish"
+        assert not cues.read_cues(original, tmp_path)["clips"]
+    finally:
+        release.set()
+        manager.close()
+
+
+def test_failed_force_remains_visible_but_subsequent_cli_repair_clears_the_error(tmp_path, monkeypatch):
+    from richard.realtime.cue_preparation import CuePreparation
+    cfg = config("en")
+    original = cues.prepare_cues(cfg, tmp_path, synth=Synth())
+    def fail(*args):
+        raise RuntimeError("TTS unavailable")
+    monkeypatch.setattr("richard.cli._build_tts", fail)
+    manager = CuePreparation(tmp_path)
+    try:
+        manager.request(cfg, force=True)
+        eventually(lambda: manager.status(cfg)["state"] == "error")
+        assert cues.read_cues(cfg, tmp_path) == original
+        assert manager.status(cfg)["state"] == "error", "old valid audio must not hide a failed regeneration"
+        cues.prepare_cues(cfg, tmp_path, synth=Synth(), force=True)
+        assert manager.status(cfg)["state"] == "ready"
+    finally:
+        manager.close()
