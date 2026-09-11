@@ -473,6 +473,7 @@ def _realtime_session_factory(config, *, brain, providers_fn, synth, transcriber
     once); each session gets its own Engine, detector, and VAD state.
     """
     from richard.realtime.session import RealtimeSession
+    from richard.realtime.cues import cue_fingerprint
     from richard.realtime.vad import EndpointDetector
     from richard.perception.camera import CameraProvider
 
@@ -500,6 +501,7 @@ def _realtime_session_factory(config, *, brain, providers_fn, synth, transcriber
             engine=engine, transcriber=transcriber, tts=synth,
             detector=detector, emit=emit, registry=registry,
             observation=observation, source_change=bind_source,
+            cue_voice=cue_fingerprint(config, "en"),
         )
 
     return factory
@@ -798,6 +800,7 @@ def _run_serve(write: Callable[[str], None] = print) -> int:
             engine_factory=_chat_engine,
             voice_turn=voice_turn,
             perception=lambda: _perception_service_of(registry),
+            cue_can_prepare=lambda: not session_registry.active(),
         )
 
     def _control_engine():

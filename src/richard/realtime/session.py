@@ -22,6 +22,7 @@ from richard.perception.frames import validate_source_id
 from richard.perception.image import data_url
 from richard.realtime import events
 from richard.realtime.chunker import ProgressiveChunker
+from richard.realtime.stt import Transcription
 from richard.realtime.vad import FRAME_BYTES
 
 BRAIN_DOWN_LINE = "I can't reach my brain right now."
@@ -46,7 +47,7 @@ class RealtimeSession:
     def __init__(self, *, engine, transcriber, tts, detector, emit,
                  partial_every: int = 25, barge_in: str = "vad",
                  registry=None, clock_hm=lambda: time.strftime("%H:%M"),
-                 observation=None, source_change=None) -> None:
+                 observation=None, source_change=None, cue_voice=None) -> None:
         self._engine = engine
         self._transcriber = transcriber
         self._tts = tts
@@ -60,6 +61,8 @@ class RealtimeSession:
         self._clock_hm = clock_hm
         self._observation = observation
         self._source_change = source_change
+        self._cue_voice = cue_voice
+        self._cue_language = None
         self.source_id: str | None = None
         self.playback_ack = False
         self.visual_context = False
@@ -347,7 +350,8 @@ class RealtimeSession:
             elif event[0] == "utterance":
                 self._emit(events.speech_stopped())
                 pcm = event[1]
-                self._start_turn(lambda: self._transcriber.final(pcm))
+                final = getattr(self._transcriber, "final_with_language", self._transcriber.final)
+                self._start_turn(lambda final=final, pcm=pcm: final(pcm))
         if self._detector.in_speech:
             self._frames_since_partial += 1
             if self._frames_since_partial >= self._partial_every:
@@ -436,12 +440,15 @@ class RealtimeSession:
                     cancel,
                 )
                 return
+            language = transcript.language if isinstance(transcript, Transcription) else None
+            transcript = transcript.text if isinstance(transcript, Transcription) else transcript
             if not transcript:
                 return
             with self._state_lock:
                 if (token is not self._active_token or cancel.is_set()
                         or self._closed.is_set()):
                     return
+                self._cue_language = language
                 if announce_transcript:
                     self._emit(events.transcription_completed(item_id, transcript))
             self._respond(transcript, token, cancel)
@@ -526,6 +533,7 @@ class RealtimeSession:
             self._remember_response(response_id)
             self._emit(events.response_created(
                 response_id, turn_id=turn_id, unsolicited=unsolicited,
+                language=self._cue_language, cue_voice=self._cue_voice,
             ))
 
         last_activity = None

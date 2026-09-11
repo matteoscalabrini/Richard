@@ -195,7 +195,8 @@ function createHarness(options = {}) {
   const fetch = async (url, init = {}) => {
     fetchCalls.push([url, init]);
     if (url === '/api/config') return response(baseConfig());
-    if (url === '/api/realtime/cues') return response({fingerprint: 'voice-a', language: 'en', clips: []});
+    if (url === '/api/realtime/cues') return response(options.cueBank ? options.cueBank() : {fingerprint: 'voice-a', language: 'en', clips: []});
+    if (url === '/api/realtime/cues/prepare') return options.prepare ? options.prepare() : response({state: 'ready'});
     if (url === '/api/status') return response({version: 'test', satellites: [], control_loops: 0, unread_notifications: 0});
     if (url === '/api/memories') return response({memories: []});
     if (url === '/api/plugins') return response({plugins: [{name: 'perception', configured: true}]});
@@ -256,6 +257,7 @@ function createHarness(options = {}) {
     startVoiceMode, stopVoiceMode, startPerceptionStream, stopPerceptionStream,
     sendChat, rtHandle, getRt: () => rt, getPerception: () => perception,
     sharedCamera, presenceUploader, setPendingImage: value => { pendingImage = value; }
+    , refreshCueBank, regenerateCueBank
   };`;
   vm.runInContext(renderedSpaScript() + exports, sandbox, {filename: 'rendered-spa.js'});
   return {
@@ -289,6 +291,54 @@ test('actual ambient and voice handlers share one camera and negotiate the page 
   assert.equal(h.cameraTrack.stopped, 0);
   h.sandbox.__spa.stopPerceptionStream();
   assert.equal(h.cameraTrack.stopped, 1);
+});
+
+test('auto cues follow response language, preserve a continuation, and reject the old runtime voice', async () => {
+  const bank = language => ({fingerprint: language, language, clips: [{id: language + '-thinking', phase: 'thinking', audio: 'AQAAAA==', sample_rate: 24000}]});
+  const h = createHarness({cueBank: () => ({mode: 'auto', voice_fingerprint: 'voice-a', banks: {en: bank('en'), it: bank('it')}, preparation: {state: 'ready', completed: 12, total: 12}})});
+  const voice = h.sandbox.__spa.startVoiceMode();
+  await h.settle(); h.resolveCamera(); await voice;
+  const ws = FakeWebSocket.instances[0];
+  const rt = h.sandbox.__spa.getRt();
+  assert.equal(rt.presence.bank.clips.length, 0, 'unknown language must not default to English');
+  ws.emit({type: 'response.created', response: {id: 'it-1', turn_id: 'turn-1', language: 'it', cue_voice: 'voice-a'}});
+  assert.equal(rt.presence.bank.clips[0].id, 'it-thinking');
+  ws.emit({type: 'response.created', response: {id: 'it-2', turn_id: 'turn-1', language: 'it', cue_voice: 'voice-a'}});
+  assert.equal(rt.presence.bank.clips[0].id, 'it-thinking');
+  ws.emit({type: 'response.created', response: {id: 'en-1', turn_id: 'turn-2', language: 'en', cue_voice: 'voice-a'}});
+  assert.equal(rt.presence.bank.clips[0].id, 'en-thinking');
+  ws.emit({type: 'response.created', response: {id: 'fr-1', turn_id: 'turn-3', language: 'fr', cue_voice: 'voice-a'}});
+  assert.equal(rt.presence.bank.clips.length, 0);
+  ws.emit({type: 'response.created', response: {id: 'old-voice', turn_id: 'turn-4', language: 'en', cue_voice: 'old-voice'}});
+  assert.equal(rt.presence.bank.clips.length, 0, 'saved voice does not replace an existing runtime synthesizer');
+  h.sandbox.__spa.stopVoiceMode();
+});
+
+test('regenerate button disables during POST and refreshes completed audio with an unchanged fingerprint', async () => {
+  const pending = deferred();
+  let audio = 'AQAAAA==';
+  const h = createHarness({
+    cueBank: () => ({mode: 'en', voice_fingerprint: 'voice-a', banks: {en: {fingerprint: 'same', clips: [{id: 'thinking-0', phase: 'thinking', audio, sample_rate: 24000}]}}, preparation: {state: 'ready', completed: 6, total: 6}}),
+    prepare: () => pending.promise,
+  });
+  await h.settle();
+  const button = h.document.getElementById('voice-cues-regenerate');
+  const job = h.sandbox.__spa.regenerateCueBank();
+  assert.equal(button.disabled, true);
+  await h.sandbox.__spa.regenerateCueBank();
+  const posts = h.fetchCalls.filter(([url]) => url === '/api/realtime/cues/prepare');
+  assert.equal(posts.length, 1);
+  assert.deepEqual(JSON.parse(posts[0][1].body), {force: true});
+  audio = 'AgAAAA==';
+  pending.resolve(response({state: 'ready'}));
+  await job;
+  assert.equal(button.disabled, false);
+  assert.match(h.document.getElementById('voice-cues-status').textContent, /ready/i);
+  const voice = h.sandbox.__spa.startVoiceMode();
+  await h.settle(); h.resolveCamera(); await voice;
+  FakeWebSocket.instances[0].emit({type: 'response.created', response: {id: 'fresh', turn_id: 'fresh-turn', language: 'en', cue_voice: 'voice-a'}});
+  assert.equal(h.sandbox.__spa.getRt().presence.bank.clips[0].decoded[0], 2 / 32768);
+  h.sandbox.__spa.stopVoiceMode();
 });
 
 test('voice startup rechecks the prepared cue bank without HTTP cache reuse', async () => {

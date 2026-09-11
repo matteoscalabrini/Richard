@@ -42,7 +42,8 @@ from richard.plugins.home_assistant.client import HomeAssistantClient
 from richard.memory import MemoryStore
 from richard.persona import BASE_CHARACTER
 from richard.perception.frames import validate_source_id
-from richard.realtime.cues import read_cues
+from richard.realtime.cues import cue_fingerprint, cue_languages, read_cues
+from richard.realtime.cue_preparation import CuePreparation
 from richard.satellite.relays import RelayRegistry
 from richard.voice.effects import EFFECTS
 from richard.voice.voices import VoiceLibrary
@@ -515,6 +516,7 @@ class WebApp:
         voice_library_factory: Callable[[str], object] = VoiceLibrary,
         plugin_records: Callable[[], list] | None = None,
         perception: Callable[[], object] | None = None,
+        cue_can_prepare: Callable[[], bool] = lambda: True,
     ) -> None:
         self._config_path = config_path
         self._memory = memory_store
@@ -530,6 +532,12 @@ class WebApp:
         self._voice_library_factory = voice_library_factory
         self._plugin_records = plugin_records
         self._perception = perception  # getter: the service exists only when the plugin is enabled
+        self._cue_preparation = CuePreparation(
+            Path(config_path).parent / "realtime-cues", can_prepare=cue_can_prepare,
+        )
+
+    def close(self) -> None:
+        self._cue_preparation.close()
 
     def handle(self, method: str, path: str, body: bytes = b"") -> Response:
         """Dispatch one request. Catches handler exceptions so a single bad request
@@ -553,6 +561,11 @@ class WebApp:
             return self._get_config()
         if method == "GET" and path == "/api/realtime/cues":
             return self._realtime_cues()
+        if method == "POST" and path == "/api/realtime/cues/prepare":
+            return self._prepare_realtime_cues(body)
+        if method == "GET" and path == "/api/realtime/cues/status":
+            return Response.json(self._cue_preparation.status(self._load(self._config_path)),
+                                 headers={"Cache-Control": "no-store"})
         if method == "PUT" and path == "/api/config":
             return self._put_config(body)
         if method == "GET" and path == "/api/home-assistant":
@@ -724,9 +737,24 @@ class WebApp:
         config = self._load(self._config_path)
         directory = Path(self._config_path).parent / "realtime-cues"
         return Response.json(
-            read_cues(config, directory),
+            {**read_cues(config, directory),
+             "mode": str(config.voice.language or "auto").strip().lower(),
+             "voice_fingerprint": cue_fingerprint(config, "en"),
+             "banks": {lang: read_cues(config, directory, language=lang) for lang in cue_languages(config)},
+             "preparation": self._cue_preparation.status(config)},
             headers={"Cache-Control": "no-store"},
         )
+
+    def _prepare_realtime_cues(self, body: bytes) -> Response:
+        payload, error = self._parse_object(body or b"{}")
+        if error:
+            return error
+        force = payload.get("force", False)
+        if not isinstance(force, bool):
+            return Response.bad_request("force must be a boolean")
+        config = self._load(self._config_path)
+        return Response.json(self._cue_preparation.request(config, force=force), 202,
+                             headers={"Cache-Control": "no-store"})
 
     # --- voice library (remote TTS server) ---
 
@@ -858,6 +886,7 @@ class WebApp:
         if not isinstance(patch, dict):
             return Response.bad_request("expected a JSON object")
         config = self._load(self._config_path)
+        cue_before = (cue_languages(config), cue_fingerprint(config, "en"))
         try:
             changed = _apply_config_update(config, patch)
         except (TypeError, ValueError) as exc:
@@ -866,6 +895,8 @@ class WebApp:
             return Response.bad_request(f"invalid config value: {exc}")
         if changed:
             self._save(config, self._config_path)
+            if cue_before != (cue_languages(config), cue_fingerprint(config, "en")):
+                self._cue_preparation.request(config)
         return Response.json({"changed": changed, "config": _config_to_dict(config)})
 
     def _home_assistant_status(self) -> Response:
@@ -1126,8 +1157,11 @@ async def serve_web(app: WebApp, host: str, port: int, ssl_context=None) -> None
     scheme = "https" if ssl_context is not None else "http"
     sockets = ", ".join(str(s.getsockname()) for s in server.sockets)
     print(f"Richard web UI listening on {sockets} ({scheme})", flush=True)
-    async with server:
-        await server.serve_forever()
+    try:
+        async with server:
+            await server.serve_forever()
+    finally:
+        await asyncio.to_thread(app.close)
 
 
 async def _serve_request(app: WebApp, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:

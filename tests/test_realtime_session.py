@@ -83,6 +83,22 @@ def collect_session(**overrides):
     return RealtimeSession(**kw), emitted, done
 
 
+def test_response_carries_utterance_language_without_shared_transcriber_state():
+    from richard.realtime.stt import Transcription
+    class LanguageTranscriber(FakeTranscriber):
+        def final_with_language(self, pcm):
+            return Transcription("Buongiorno", "it")
+    session, emitted, done = collect_session(transcriber=LanguageTranscriber())
+    try:
+        session.feed_audio(FRAME * 2)
+        wait(done)
+        created = next(e["response"] for e in emitted if e["type"] == "response.created")
+        assert created["language"] == "it"
+        assert session.conversation.history()[0].text() == "Buongiorno"
+    finally:
+        session.close()
+
+
 def wait(done, timeout=5.0):
     assert done.wait(timeout), "response.done never arrived"
 

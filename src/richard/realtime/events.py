@@ -74,10 +74,15 @@ def transcription_completed(item_id: str, transcript: str) -> dict:
 
 
 def response_created(response_id: str, *, turn_id: str | None = None,
-                     unsolicited: bool = False) -> dict:
+                     unsolicited: bool = False, language: str | None = None,
+                     cue_voice: str | None = None) -> dict:
     response = {"id": response_id}
     if turn_id is not None:
         response.update(turn_id=turn_id, unsolicited=unsolicited)
+    if language is not None:
+        response["language"] = language
+    if cue_voice is not None:
+        response["cue_voice"] = cue_voice
     return {"type": "response.created", "response": response}
 
 

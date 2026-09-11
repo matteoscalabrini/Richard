@@ -155,7 +155,7 @@ def test_manifest_contains_no_endpoint_or_credentials(tmp_path):
 
     prepare_cues(config, _cache(tmp_path), synth=FakeSynth())
 
-    manifest = (_cache(tmp_path) / "manifest.json").read_text(encoding="utf-8")
+    manifest = next(_cache(tmp_path).glob("*.json")).read_text(encoding="utf-8")
     assert "super-secret" not in manifest
     assert "voice.internal.example" not in manifest
 
@@ -175,7 +175,7 @@ def test_read_rejects_corrupt_or_incomplete_bank_as_a_whole(tmp_path, corrupt):
     config = _config()
     cache = _cache(tmp_path)
     expected = prepare_cues(config, cache, synth=FakeSynth())
-    path = cache / "manifest.json"
+    path = cache / (expected["fingerprint"] + ".json")
     data = json.loads(path.read_text(encoding="utf-8"))
     corrupt(data)
     path.write_text(json.dumps(data), encoding="utf-8")
@@ -209,7 +209,7 @@ def test_failed_forced_preparation_preserves_the_complete_previous_bank(tmp_path
         prepare_cues(config, cache, synth=FakeSynth(marker=9, fail_at=3), force=True)
 
     assert read_cues(config, cache) == first
-    assert sorted(path.name for path in cache.iterdir()) == ["manifest.json"]
+    assert sorted(path.name for path in cache.iterdir()) == [first["fingerprint"] + ".json"]
 
 
 def test_force_atomically_replaces_bank_for_same_voice_identifier(tmp_path):
@@ -261,7 +261,9 @@ def test_http_get_reads_adjacent_custom_config_cache_without_synthesis(
 
     assert response.status == 200
     assert response.headers == {"Cache-Control": "no-store"}
-    assert json.loads(response.body) == prepared
+    payload = json.loads(response.body)
+    assert {key: payload[key] for key in prepared} == prepared
+    assert payload["banks"]["it"] == prepared
 
 
 def test_cli_prepare_uses_build_tts_and_cache_adjacent_to_selected_config(

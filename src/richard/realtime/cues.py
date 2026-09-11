@@ -12,13 +12,15 @@ import binascii
 import hashlib
 import json
 import os
+import re
 import tempfile
+from copy import deepcopy
 from pathlib import Path
 
 from richard.config import Config, default_config_path, load_config
 
 _SCHEMA = 1
-_CATALOG_REVISION = 1
+_CATALOG_REVISION = 2
 _CACHE_NAME = "realtime-cues"
 _MANIFEST_NAME = "manifest.json"
 _MIN_SAMPLE_RATE = 8_000
@@ -52,6 +54,14 @@ def _selected_language(config: Config) -> str:
     if configured in {"it", "italian"}:
         return "it"
     return configured
+
+
+def cue_languages(config: Config) -> tuple[str, ...]:
+    """Auto prepares both supported languages, without guessing the next turn."""
+    if str(config.voice.language or "").strip().lower() in {"", "auto"}:
+        return ("en", "it")
+    selected = _selected_language(config)
+    return (selected,) if selected in _CATALOGS else ()
 
 
 def _catalog_payload(language: str) -> list[dict[str, str]]:
@@ -137,14 +147,16 @@ def _decode_clip(raw: object, expected: dict[str, str]) -> dict | None:
     }
 
 
-def read_cues(config, directory=None) -> dict:
+def read_cues(config, directory=None, *, language=None) -> dict:
     """Read the matching prepared bank, returning an empty bank on any defect."""
-    language = _selected_language(config)
+    language = language or _selected_language(config)
     empty = _empty_bank(config, language)
     catalog = _catalog_payload(language)
     if not catalog:
         return empty
-    path = _cache_directory(directory) / _MANIFEST_NAME
+    path = _cache_directory(directory) / (empty["fingerprint"] + ".json")
+    if not path.exists():
+        path = _cache_directory(directory) / _MANIFEST_NAME
     try:
         manifest = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(manifest, dict):
@@ -187,26 +199,35 @@ def _atomic_write_json(path: Path, payload: dict) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def prepare_cues(config, directory=None, *, synth=None, force=False) -> dict:
+def prepare_cues(config, directory=None, *, synth=None, force=False, language=None,
+                 before_clip=None, progress=None) -> dict:
     """Synthesize and atomically publish the configured cue bank."""
-    language = _selected_language(config)
+    language = language or _selected_language(config)
     catalog = _catalog_payload(language)
     if not catalog:
         return _empty_bank(config, language)
 
     destination = _cache_directory(directory)
     if not force:
-        existing = read_cues(config, destination)
+        existing = read_cues(config, destination, language=language)
         if existing["clips"]:
+            if progress is not None:
+                progress(len(existing["clips"]))
             return existing
 
+    if before_clip is not None:
+        before_clip()
     if synth is None:
         from richard.cli import _build_tts
 
-        synth = _build_tts(config, print)
+        synthesis_config = deepcopy(config)
+        synthesis_config.voice.tts_language = {"en": "English", "it": "Italian"}[language]
+        synth = _build_tts(synthesis_config, print)
 
     clips = []
     for entry in catalog:
+        if before_clip is not None:
+            before_clip()
         pcm = synth.synth(entry["text"])
         sample_rate = synth.samplerate
         if not isinstance(pcm, bytes):
@@ -222,6 +243,8 @@ def prepare_cues(config, directory=None, *, synth=None, force=False) -> dict:
                 "sha256": hashlib.sha256(pcm).hexdigest(),
             }
         )
+        if progress is not None:
+            progress(len(clips))
 
     fingerprint = cue_fingerprint(config, language)
     manifest = {
@@ -231,8 +254,17 @@ def prepare_cues(config, directory=None, *, synth=None, force=False) -> dict:
         "language": language,
         "clips": clips,
     }
-    _atomic_write_json(destination / _MANIFEST_NAME, manifest)
-    return read_cues(config, destination)
+    if before_clip is not None:
+        before_clip()
+    current = destination / (fingerprint + ".json")
+    _atomic_write_json(current, manifest)
+    # Keep a few recent voice/language combinations, not an ever-growing archive.
+    variants = sorted((p for p in destination.glob("*.json")
+                       if re.fullmatch(r"[0-9a-f]{64}\.json", p.name) and p != current),
+                      key=lambda p: p.stat().st_mtime, reverse=True)
+    for expired in variants[7:]:
+        expired.unlink(missing_ok=True)
+    return read_cues(config, destination, language=language)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -240,6 +272,8 @@ def _build_parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
     prepare = commands.add_parser("prepare", help="Prepare the configured voice cue bank")
     prepare.add_argument("--config", type=Path, help="Config file (default: ~/.richard/config.toml)")
+    prepare.add_argument("--language", choices=("en", "it", "all"),
+                         help="Override the configured language; auto prepares English and Italian")
     prepare.add_argument(
         "--force",
         action="store_true",
@@ -252,15 +286,14 @@ def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     config_path = args.config or default_config_path()
     config = load_config(config_path)
-    bank = prepare_cues(
-        config,
-        Path(config_path).parent / _CACHE_NAME,
-        force=args.force,
-    )
-    if bank["clips"]:
+    languages = (("en", "it") if args.language == "all" else
+                 (args.language,) if args.language else cue_languages(config))
+    for language in languages:
+        bank = prepare_cues(config, Path(config_path).parent / _CACHE_NAME,
+                            force=args.force, language=language)
         print(f"Prepared {len(bank['clips'])} realtime voice cues ({bank['language']}).")
-    else:
-        print(f"No realtime voice cues for configured language {bank['language']!r}.")
+    if not languages:
+        print(f"No realtime voice cues for configured language {_selected_language(config)!r}.")
     return 0
 
 

@@ -17,32 +17,61 @@ TLS mirrors the web UI: the same self-signed pair, plaintext ws:// if TLS is off
 
 ## Prepared voice cues
 
-The browser can load short, same-voice waiting cues from the web server without
-starting TTS during a conversation. Prepare the bank explicitly after configuring
-the voice:
+The browser loads short waiting phrases prepared with the saved voice and effect.
+In the voice settings, **Regenerate waiting phrases** forces a fresh preparation,
+including when a reference recording was replaced under the same voice name.
+Saving a changed language or TTS setting automatically prepares missing groups.
+The page shows progress, readiness, unsupported language, or a retryable error.
+Preparation uses one background worker with a replaceable pending request; repeated
+clicks coalesce. It pauses between clips while realtime voice sessions are open.
+An already-started TTS call may finish. Neither HTTP reads nor conversation turns
+start synthesis. Voice/effect changes still require restarting the server to apply
+them to its existing conversational synthesizer.
+
+The CLI remains available:
 
     python -m richard.realtime.cues prepare
     python -m richard.realtime.cues prepare --config /path/to/config.toml
+    python -m richard.realtime.cues prepare --language all --force
 
-The cache is stored in `realtime-cues/` beside the selected config file (normally
-`~/.richard/realtime-cues/`), never in the repository. Preparation uses the
-configured TTS engine, voice, language controls, and voice effect. It is idempotent
-while that complete bank still matches the configuration. Use `--force` after
-replacing a voice sample under the same voice identifier.
+The cache is stored in `realtime-cues/` beside the selected config file, normally
+`~/.richard/realtime-cues/`. Complete groups are atomic JSON files named by their
+voice/language fingerprint. Up to eight recently prepared groups are retained;
+switching back to a retained voice/language reuses it. A failed replacement keeps
+the previous complete group. The older `manifest.json` format can still be read
+when its catalog revision and fingerprint match. No credentials or endpoint names
+are written in the manifest.
 
-`voice.language = "it"` or `"Italian"` selects the Italian catalog. `"en"`,
-`"English"`, `"auto"`, or an empty setting selects English. An unsupported explicit
-language prepares no clips, so Richard remains silent rather than speaking a
-different language.
+`voice.language = "it"` or `"Italian"` selects Italian; `"en"` or `"English"`
+selects English. `"auto"` or an empty setting prepares both. Each group's synthesis
+uses its catalog language, even if a different `tts_language` was saved; settings
+are never mutated by preparation. In auto mode the browser chooses the language
+reported by final speech recognition, retained across client-tool continuations.
+Typed turns can use the session's last detected spoken language. Before a language
+is known, or for an unsupported language, waiting phrases remain silent. There is
+no extra model request for language detection. Explicit-language mode uses its
+configured group. A runtime voice fingerprint prevents new saved-voice phrases
+from playing over a session that still uses the old synthesizer.
 
-The web server exposes the current bank through read-only HTTP:
+The HTTP API (all responses use `Cache-Control: no-store`):
 
-    GET /api/realtime/cues
+- `GET /api/realtime/cues`: read-only audio envelope. Legacy `{fingerprint,
+  language, clips}` fields remain, with additive `mode`, `voice_fingerprint`,
+  `banks` keyed by language, and `preparation` status. A missing, corrupt,
+  incomplete or incompatible group has `clips: []`. Each clip carries `id`,
+  `phase`, `text`, base64 PCM16 `audio`, and `sample_rate`.
+- `POST /api/realtime/cues/prepare`: starts or coalesces a job, returning HTTP202
+  with status. Accepts `{force: true}` to replace valid groups; the default is
+  false. Uses saved configuration, not unsaved form values.
+- `GET /api/realtime/cues/status`: read-only progress without audio payloads.
+  Status includes `state` (`missing`, `queued`, `preparing`, `ready`, `error`,
+  `unsupported`), `completed`, `total`, and `languages`; failures add `error`.
 
-The response is `{fingerprint, language, clips}`. Each clip has `id`, `phase`,
-`text`, base64 PCM16 `audio`, and `sample_rate`. A missing, corrupt, incomplete, or
-wrong-voice bank returns the current fingerprint and language with `clips: []`.
-The endpoint never synthesizes audio or starts a background preparation job.
+Editing the configuration file directly does not launch a job. Reload the page
+or restart voice mode to refresh the saved configuration, then use the button or
+CLI if a group is missing. The UI polls progress only while a job is pending and
+reloads audio after completion, including a forced replacement with the same
+fingerprint.
 
 The web voice client decodes this bank before a turn begins and uses each clip at
 its stored sample rate. During a solicited turn it may play one prepared cue after
@@ -80,7 +109,7 @@ therefore degrades to silence, with no browser speech-synthesis fallback.
 | `input_audio_buffer.speech_started` / `speech_stopped` | VAD boundary (UI: listening state) |
 | `conversation.item.input_audio_transcription.delta` | **full partial transcript so far** (replace, not append — deviation from OpenAI) |
 | `conversation.item.input_audio_transcription.completed` | final transcript of the user turn |
-| `response.created` | Richard started a response; active turns include `response: {id, turn_id, unsolicited}` |
+| `response.created` | Richard started a response; active turns include `response: {id, turn_id, unsolicited}`, optional detected `language`, and a `cue_voice` fingerprint of the runtime synthesizer settings |
 | `response.activity` | factual processing state: `{response_id, turn_id, phase, unsolicited}` where phase is `thinking`, `tool`, `vision`, `answer`, or `error` |
 | `response.output_text.delta` | reply text as it streams |
 | `response.audio.delta` | base64 PCM16 chunk of speech |

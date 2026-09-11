@@ -634,6 +634,20 @@ SPA_HTML = r"""<!DOCTYPE html>
       </div>
     </div>
 
+    <!-- system.voice.waiting -->
+    <div class="terminal-section">
+      <div class="terminal-header-line" data-target="voice-cues-content">
+        <span class="terminal-prompt">&gt; </span>
+        <span class="terminal-command window-title">system.voice.waiting</span>
+        <span class="window-control is-open">[_]</span>
+      </div>
+      <div class="window-content" id="voice-cues-content">
+        <p class="lede">Short phrases for conversational pauses, prepared with your saved voice settings. Auto keeps English and Italian ready and follows the detected spoken language.</p>
+        <div class="button-row"><button class="setting-button" id="voice-cues-regenerate">Regenerate waiting phrases</button><div class="status-line" id="voice-cues-status" role="status" aria-live="polite"></div></div>
+        <span class="hint">Saving language or voice settings prepares missing phrases. Preparation pauses while voice mode is open. Regenerate after replacing a voice sample under the same name. Voice and effect changes still need a server restart.</span>
+      </div>
+    </div>
+
     <!-- system.voice.sample -->
     <div class="terminal-section" data-remote-only>
       <div class="terminal-header-line" data-target="voice-sample-content">
@@ -1593,6 +1607,8 @@ registerProcessor('pcm16-capture', Pcm16Capture);
 `;
 
 let preparedCueBank = {fingerprint: null, clips: []};
+let preparedCueBanks = null, preparedCueMode = 'auto', preparedCueVoice = null;
+let cuePollTimer = null, cuePostPending = false;
 let cueBankRequest = 0;
 function decodePreparedPcm(audio){
   const pcm = rtPcmFromB64(audio); const decoded = new Float32Array(pcm.length);
@@ -1602,16 +1618,87 @@ function decodePreparedPcm(audio){
 async function refreshCueBank(){
   const request = ++cueBankRequest;
   let next = {fingerprint: null, clips: []};
+  let banks = null, data = null;
+  const decode = bank => ({fingerprint: bank.fingerprint || null, clips: (bank.clips || []).map(clip => ({
+    id: clip.id, phase: clip.phase, sampleRate: clip.sample_rate, decoded: decodePreparedPcm(clip.audio),
+  }))});
   try {
-    const data = await getJSON('/api/realtime/cues', {cache: 'no-store'});
-    next = {fingerprint: data.fingerprint || null, clips: (data.clips || []).map(clip => ({
-      id: clip.id, phase: clip.phase, sampleRate: clip.sample_rate, decoded: decodePreparedPcm(clip.audio),
-    }))};
+    data = await getJSON('/api/realtime/cues', {cache: 'no-store'});
+    next = decode(data);
+    if (data.banks) banks = Object.fromEntries(Object.entries(data.banks).map(([language, bank]) => [language, decode(bank)]));
   } catch (_) {}
   if (request !== cueBankRequest) return preparedCueBank;
   preparedCueBank = next;
-  if (rt && rt.presence) rt.presence.setBank(next);
+  preparedCueBanks = banks;
+  preparedCueMode = data && data.mode || 'auto';
+  preparedCueVoice = data && data.voice_fingerprint || null;
+  selectCueBank();
+  if (data && data.preparation) {
+    renderCueStatus(data.preparation);
+    scheduleCuePoll(data.preparation);
+  }
   return next;
+}
+
+function selectCueBank(){
+  if (!rt || !rt.presence) return;
+  let next = preparedCueBank;
+  if (preparedCueBanks) {
+    const mode = {italian: 'it', english: 'en'}[preparedCueMode] || preparedCueMode;
+    const language = mode === 'auto' ? rt.cueLanguage : mode;
+    next = rt.cueVoice === preparedCueVoice && preparedCueBanks[language]
+      || {fingerprint: null, clips: []};
+  }
+  if (rt.cueBank !== next) {
+    rt.cueBank = next;
+    rt.presence.setBank(next);
+  }
+}
+
+function renderCueStatus(status){
+  const busy = status.state === 'queued' || status.state === 'preparing';
+  $('voice-cues-regenerate').disabled = cuePostPending || busy || status.state === 'unsupported';
+  const languages = (status.languages || []).map(l => l.toUpperCase()).join(' / ');
+  const messages = {
+    ready: 'Ready · ' + status.completed + ' phrases' + (languages ? ' · ' + languages : ''),
+    preparing: 'Preparing ' + status.completed + ' / ' + status.total + '…',
+    queued: 'Waiting to prepare… Close voice mode if it is active.',
+    missing: 'Phrases need preparation.',
+    unsupported: 'Waiting phrases support English and Italian.',
+    error: status.error || 'Preparation failed. Try again.',
+  };
+  setStatus('voice-cues', messages[status.state] || 'Checking…', status.state === 'error' ? 'err' : status.state === 'ready' ? 'ok' : '');
+}
+
+function scheduleCuePoll(status){
+  clearTimeout(cuePollTimer); cuePollTimer = null;
+  if (status.state !== 'queued' && status.state !== 'preparing') return;
+  cuePollTimer = setTimeout(async () => {
+    cuePollTimer = null;
+    try {
+      const next = await getJSON('/api/realtime/cues/status', {cache: 'no-store'});
+      renderCueStatus(next);
+      if (next.state === 'ready') await refreshCueBank();
+      else scheduleCuePoll(next);
+    } catch (_) { renderCueStatus({state: 'error', error: 'Cannot check preparation. Try again.'}); }
+  }, 1000);
+}
+
+async function regenerateCueBank(){
+  if (cuePostPending || $('voice-cues-regenerate').disabled) return;
+  cuePostPending = true;
+  $('voice-cues-regenerate').disabled = true;
+  setStatus('voice-cues', 'Requesting preparation…', '');
+  try {
+    const status = await sendJSON('/api/realtime/cues/prepare', 'POST', {force: true});
+    cuePostPending = false;
+    renderCueStatus(status);
+    if (status.state === 'ready') await refreshCueBank();
+    else scheduleCuePoll(status);
+  } catch (e) {
+    cuePostPending = false;
+    renderCueStatus({state: 'error', error: 'Preparation failed: ' + e.message});
+  }
 }
 
 function makeCameraVideo(stream){
@@ -1766,6 +1853,9 @@ function rtHandle(msg){
       break;
     case 'response.created':
       rt.presence.responseCreated(msg.response);
+      rt.cueLanguage = msg.response.language || null;
+      rt.cueVoice = msg.response.cue_voice || null;
+      selectCueBank();
       setEntityState('thinking'); setStatus('chat', 'thinking…', ''); rt.replyLine = '';
       break;
     case 'response.output_text.delta': if (rt.presence.accepts(msg.response_id)) rt.replyLine += msg.delta; break;
@@ -1863,7 +1953,7 @@ async function startVoiceMode(){
       playClip: rtPlayPreparedCue,
       stopClip: handle => { if (handle) handle.stop(); },
     });
-    rt.presence.setBank(preparedCueBank);
+    selectCueBank();
     ws.onclose = () => stopVoiceMode();
     ws.onerror = () => setStatus('chat', 'voice connection failed', 'err');
     ws.onmessage = e => { try { rtHandle(JSON.parse(e.data)); } catch (_) {} };
@@ -2176,6 +2266,8 @@ $('home-assistant-restart').addEventListener('click', rebootServe);
 $('voice.tts_engine').addEventListener('change', () => { reflectRemoteOnly(); loadVoices(); });
 reflectRemoteOnly();  // initial state before /api/config answers
 $('voice-sample-upload').addEventListener('click', uploadVoiceSample);
+$('voice-cues-regenerate').addEventListener('click', regenerateCueBank);
+window.addEventListener('pagehide', () => { clearTimeout(cuePollTimer); cuePollTimer = null; ++cueBankRequest; });
 $('voice-sample-restart').addEventListener('click', rebootServe);
 $('voice-list').addEventListener('click', e => { const b = e.target.closest('[data-use-voice]'); if (b) useVoice(b.dataset.useVoice); });
 $('plugins-refresh').addEventListener('click', loadPlugins);

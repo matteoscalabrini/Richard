@@ -10,8 +10,15 @@ buffer each pass is simpler and fast enough (spec's chosen approach).
 from __future__ import annotations
 
 import threading
+from dataclasses import dataclass
 
 import numpy as np
+
+
+@dataclass(frozen=True)
+class Transcription:
+    text: str
+    language: str | None
 
 
 class TurnTranscriber:
@@ -34,22 +41,26 @@ class TurnTranscriber:
             )
         return self._model
 
-    def _decode(self, pcm: bytes) -> str:
+    def _decode(self, pcm: bytes) -> Transcription:
         if not pcm:
-            return ""
+            return Transcription("", None)
         audio = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
         with self._lock:
-            segments, _info = self._ensure().transcribe(
+            segments, info = self._ensure().transcribe(
                 audio,
                 beam_size=1,
                 language=self._language,
                 vad_filter=False,  # endpointing already ran Silero; don't double-gate
                 condition_on_previous_text=False,
             )
-            return "".join(s.text for s in segments).strip()
+            language = getattr(info, "language", None) or self._language
+            return Transcription("".join(s.text for s in segments).strip(), language)
 
     def partial(self, pcm: bytes) -> str:
-        return self._decode(pcm)
+        return self._decode(pcm).text
 
     def final(self, pcm: bytes) -> str:
+        return self._decode(pcm).text
+
+    def final_with_language(self, pcm: bytes) -> Transcription:
         return self._decode(pcm)

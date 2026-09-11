@@ -1,4 +1,5 @@
 import numpy as np
+from types import SimpleNamespace
 
 from richard.realtime.stt import TurnTranscriber
 
@@ -50,3 +51,16 @@ def test_empty_pcm_returns_empty_without_model_call():
     t = TurnTranscriber(_model=fake)
     assert t.final(b"") == ""
     assert fake.calls == []
+
+
+def test_final_language_belongs_to_its_decode_and_legacy_text_stays_compatible():
+    class Languages(FakeModel):
+        def transcribe(self, audio, **kwargs):
+            segments, _ = super().transcribe(audio, **kwargs)
+            return segments, SimpleNamespace(language="it" if len(self.calls) == 1 else "en")
+    t = TurnTranscriber(_model=Languages())
+    first = t.final_with_language(_pcm())
+    second = t.final_with_language(_pcm())
+    assert (first.text, first.language) == ("hello there", "it")
+    assert second.language == "en"
+    assert t.final(_pcm()) == "hello there"

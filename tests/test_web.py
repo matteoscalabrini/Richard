@@ -15,6 +15,26 @@ from richard.web import WebApp
 from richard.web.app import _format_response
 
 
+@pytest.fixture(autouse=True)
+def offline_cue_preparation(monkeypatch):
+    """Config-save tests keep the real queue/cache; only external speech is fake."""
+    from richard.realtime.cue_preparation import CuePreparation
+    class OfflineTTS:
+        samplerate = 24000
+        def synth(self, text):
+            return b"\x01\x00" * 240
+    monkeypatch.setattr("richard.cli._build_tts", lambda *args: OfflineTTS())
+    workers = []
+    initialize = CuePreparation.__init__
+    def track(self, *args, **kwargs):
+        initialize(self, *args, **kwargs)
+        workers.append(self)
+    monkeypatch.setattr(CuePreparation, "__init__", track)
+    yield
+    for worker in workers:
+        worker.close()
+
+
 class FakeTargetHomeAssistant:
     """Backs the control-loop target reader — no sockets."""
 
