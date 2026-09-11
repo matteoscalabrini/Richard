@@ -1,3 +1,5 @@
+import threading
+
 import pytest
 
 from richard.brain.completion import StreamEvent, ToolCall
@@ -64,6 +66,104 @@ def test_executes_tool_then_streams_text():
     assert out == "Done. Fan's off."
     assert provider.executed == [("set_fan", {"on": False})]
     assert any(m.get("role") == "tool" and m.get("content") == "ok" for m in brain.calls[1])
+
+
+def test_cancellation_after_brain_returns_stops_before_tool_or_another_brain_round():
+    entered = threading.Event()
+    release = threading.Event()
+    cancelled = threading.Event()
+
+    class BlockingBrain(FakeBrain):
+        def stream(self, messages, tools=None):
+            self.calls.append(list(messages))
+            entered.set()
+            assert release.wait(5)
+            yield StreamEvent(
+                tool_calls=[ToolCall(id="1", name="set_fan", arguments={})],
+                done=True,
+            )
+
+    brain = BlockingBrain([])
+    provider = FakeProvider()
+    conversation = Conversation()
+    conversation.add_user("turn the fan off")
+    output = []
+    worker = threading.Thread(
+        target=lambda: output.extend(
+            Engine(brain, [provider], Personality()).respond_streaming(
+                conversation, cancelled=cancelled.is_set,
+            )
+        )
+    )
+
+    worker.start()
+    assert entered.wait(5)
+    cancelled.set()
+    release.set()
+    worker.join(5)
+
+    assert not worker.is_alive()
+    assert output == []
+    assert provider.executed == []
+    assert len(brain.calls) == 1
+    assert [message.role for message in conversation.history()] == ["user"]
+
+
+def test_cancellation_during_tool_records_entered_result_and_marks_later_calls_unrun():
+    entered = threading.Event()
+    release = threading.Event()
+    cancelled = threading.Event()
+
+    class BlockingProvider(FakeProvider):
+        def schemas(self):
+            return [
+                {"type": "function", "function": {"name": name, "parameters": {}}}
+                for name in ("first_tool", "later_tool")
+            ]
+
+        def execute(self, name, arguments):
+            self.executed.append((name, arguments))
+            if name == "first_tool":
+                entered.set()
+                assert release.wait(5)
+                return "first result"
+            return "later result"
+
+    brain = FakeBrain([
+        {"tool_calls": [
+            ToolCall(id="1", name="first_tool", arguments={}),
+            ToolCall(id="2", name="later_tool", arguments={}),
+        ]},
+        {"deltas": ["too late"]},
+    ])
+    provider = BlockingProvider()
+    conversation = Conversation()
+    conversation.add_user("run both")
+    output = []
+    worker = threading.Thread(
+        target=lambda: output.extend(
+            Engine(brain, [provider], Personality()).respond_streaming(
+                conversation, cancelled=cancelled.is_set,
+            )
+        )
+    )
+
+    worker.start()
+    assert entered.wait(5)
+    cancelled.set()
+    release.set()
+    worker.join(5)
+
+    history = [message.to_chat() for message in conversation.history()]
+    assert not worker.is_alive()
+    assert output == []
+    assert provider.executed == [("first_tool", {})]
+    assert len(brain.calls) == 1
+    assert [message["role"] for message in history] == ["user", "assistant", "tool", "tool"]
+    assert history[2] == {"role": "tool", "tool_call_id": "1", "content": "first result"}
+    assert history[3]["tool_call_id"] == "2"
+    assert "not run" in history[3]["content"].lower()
+    assert "cancel" in history[3]["content"].lower()
 
 
 def test_honors_max_rounds():

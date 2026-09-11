@@ -291,6 +291,17 @@ test('actual ambient and voice handlers share one camera and negotiate the page 
   assert.equal(h.cameraTrack.stopped, 1);
 });
 
+test('voice startup rechecks the prepared cue bank without HTTP cache reuse', async () => {
+  const h = createHarness();
+  const voice = h.sandbox.__spa.startVoiceMode();
+  await h.settle();
+  h.resolveCamera();
+  await voice;
+
+  const cueRequest = h.fetchCalls.find(([url]) => url === '/api/realtime/cues');
+  assert.equal(cueRequest[1].cache, 'no-store');
+});
+
 test('actual session handler queues a fresh frame behind an existing upload', async () => {
   const first = deferred();
   const h = createHarness();

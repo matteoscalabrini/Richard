@@ -47,7 +47,7 @@ class FakeEngine:
         self.deltas = deltas
         self.seen = []
 
-    def respond_streaming(self, conversation, client_tools=None, observer=None):
+    def respond_streaming(self, conversation, client_tools=None, observer=None, cancelled=None):
         self.seen.append([ (m.role, m.content) for m in conversation.history() ])
         yield from self.deltas
 
@@ -261,7 +261,7 @@ def test_explicit_cancel_stops_response():
 
 
 class DownEngine:
-    def respond_streaming(self, conversation, client_tools=None, observer=None):
+    def respond_streaming(self, conversation, client_tools=None, observer=None, cancelled=None):
         from richard.errors import BrainUnreachable
         raise BrainUnreachable("boom")
         yield  # pragma: no cover — makes this a generator
@@ -341,6 +341,30 @@ def test_cancel_during_blocked_stt_stops_before_transcript_or_inference():
     session.close()
 
 
+def test_queued_typed_turn_runs_when_response_create_follows_cancelled_worker_exit():
+    transcriber = GatedTranscriber()
+    engine = FakeEngine()
+    session, emitted, done = collect_session(transcriber=transcriber, engine=engine)
+    session.feed_audio(FRAME)
+    session.feed_audio(FRAME)
+    assert transcriber.entered.wait(5)
+
+    session.create_item({"kind": "message", "content": "new typed request"})
+    transcriber.release.set()
+    assert wait_until(lambda: session._turn_thread is None)
+    assert session.conversation.history() == []
+
+    session.create_response()
+    wait(done)
+
+    assert engine.seen == [[("user", "new typed request")]]
+    assert session._queued_items == []
+    created = [event["response"] for event in emitted if event["type"] == "response.created"]
+    assert len(created) == 1
+    assert created[0]["turn_id"]
+    session.close()
+
+
 def test_cancel_after_transcript_event_stops_before_response_mutation():
     emitted = []
     engine = FakeEngine()
@@ -374,7 +398,7 @@ def test_cancel_after_transcript_event_stops_before_response_mutation():
 
 
 class ExplodingEngine:
-    def respond_streaming(self, conversation, client_tools=None, observer=None):
+    def respond_streaming(self, conversation, client_tools=None, observer=None, cancelled=None):
         raise RuntimeError("kaboom")
         yield  # pragma: no cover — makes this a generator
 
@@ -440,7 +464,7 @@ class CameraEngine:
     def tool_names(self):
         return ["remember", "forget"]
 
-    def respond_streaming(self, conversation, client_tools=None, observer=None):
+    def respond_streaming(self, conversation, client_tools=None, observer=None, cancelled=None):
         self.client_tools.append(list(client_tools or []))
         self.seen.append([m.to_chat() for m in conversation.history()])
         self.turns += 1
@@ -562,7 +586,7 @@ def test_response_create_seals_dangling_calls_before_running():
 
 
 class RejectingEngine:
-    def respond_streaming(self, conversation, client_tools=None, observer=None):
+    def respond_streaming(self, conversation, client_tools=None, observer=None, cancelled=None):
         raise BrainRejectedInput("brain rejected the request (400): no vision")
         yield  # pragma: no cover
 
@@ -707,7 +731,7 @@ class QuietCameraEngine:
         self.looks = looks
         self.seen = []
 
-    def respond_streaming(self, conversation, client_tools=None, observer=None):
+    def respond_streaming(self, conversation, client_tools=None, observer=None, cancelled=None):
         self.seen.append([m.to_chat() for m in conversation.history()])
         if len(self.seen) <= self.looks:
             call_id = f"look-{len(self.seen)}"
@@ -787,9 +811,9 @@ def test_fresh_user_turn_does_not_inherit_unsolicited_camera_silence(new_input):
 
 def test_user_input_during_camera_handoff_takes_priority():
     class InterruptedCameraEngine(QuietCameraEngine):
-        def respond_streaming(self, conversation, client_tools=None, observer=None):
+        def respond_streaming(self, conversation, client_tools=None, observer=None, cancelled=None):
             for delta in super().respond_streaming(
-                conversation, client_tools=client_tools, observer=observer
+                conversation, client_tools=client_tools, observer=observer, cancelled=cancelled
             ):
                 yield delta
                 if isinstance(delta, ClientToolCall):

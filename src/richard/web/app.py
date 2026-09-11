@@ -66,8 +66,8 @@ class Response:
     headers: dict | None = None
 
     @classmethod
-    def json(cls, payload, status: int = 200) -> "Response":
-        return cls(status, json.dumps(payload).encode(), "application/json")
+    def json(cls, payload, status: int = 200, headers: dict | None = None) -> "Response":
+        return cls(status, json.dumps(payload).encode(), "application/json", headers)
 
     @classmethod
     def text(cls, payload: str, status: int = 200, content_type: str = "text/plain") -> "Response":
@@ -723,7 +723,10 @@ class WebApp:
     def _realtime_cues(self) -> Response:
         config = self._load(self._config_path)
         directory = Path(self._config_path).parent / "realtime-cues"
-        return Response.json(read_cues(config, directory))
+        return Response.json(
+            read_cues(config, directory),
+            headers={"Cache-Control": "no-store"},
+        )
 
     # --- voice library (remote TTS server) ---
 

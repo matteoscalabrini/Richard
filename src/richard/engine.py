@@ -18,6 +18,7 @@ from richard.providers.base import Provider, ToolResult
 # nudges itself once instead. NOTHING_TO_RUN lets the model decline a false positive;
 # the sentinel is never shown to the user (same idiom as CONTROL_LOOP_NO_TRIGGER).
 NOTHING_TO_RUN = "NOTHING_TO_RUN"
+CANCELLED_TOOL_RESULT = json.dumps({"error": "tool was not run because response was cancelled"})
 
 NUDGE_PROMPT = (
     "[ACTION CHECK] You announced an action but no tool was called. If the action "
@@ -129,7 +130,8 @@ class Engine:
         self, conversation: Conversation, working: list[dict], completion: Completion,
         deferred: frozenset[str] = frozenset(),
         observer: Callable[[str], None] | None = None,
-    ) -> bool:
+        cancelled: Callable[[], bool] | None = None,
+    ) -> tuple[bool, bool]:
         """Execute the calls and append the round to both the request and the history.
 
         The round is persisted verbatim (see Message): the next turn must replay the
@@ -143,9 +145,14 @@ class Engine:
         working.append(tool_message)
         conversation.add_tool_call(tool_message["content"], tool_message["tool_calls"])
         images: list[str] = []
+        completed: set[str] = set()
+        stopped = False
         for call in completion.tool_calls:
             if call.id in deferred:
                 continue
+            if cancelled is not None and cancelled():
+                stopped = True
+                break
             if observer is not None:
                 observer("tool")
             result = self._execute(call.name, call.arguments)
@@ -154,13 +161,27 @@ class Engine:
                 images.extend(result.images)
             working.append({"role": "tool", "tool_call_id": call.id, "content": text})
             conversation.add_tool_result(call.id, text)
+            completed.add(call.id)
+            if cancelled is not None and cancelled():
+                stopped = True
+                break
+        if stopped:
+            for call in completion.tool_calls:
+                if call.id in completed:
+                    continue
+                working.append({
+                    "role": "tool",
+                    "tool_call_id": call.id,
+                    "content": CANCELLED_TOOL_RESULT,
+                })
+                conversation.add_tool_result(call.id, CANCELLED_TOOL_RESULT)
         if images:
             # Pictures ride as a user message after the round's tool messages: the same
             # shape the Reachy app produces, so history looks alike whoever took them.
             parts = user_parts(None, images)
             working.append({"role": "user", "content": parts})
             conversation.add_user(parts)
-        return bool(images)
+        return bool(images), stopped
 
     def respond(self, conversation: Conversation) -> str:
         working: list[dict] = [{"role": "system", "content": self._head(conversation)}]
@@ -199,6 +220,7 @@ class Engine:
     def respond_streaming(
         self, conversation: Conversation, client_tools: list[dict] | None = None,
         observer: Callable[[str], None] | None = None,
+        cancelled: Callable[[], bool] | None = None,
     ) -> Iterator[str | ClientToolCall]:
         working: list[dict] = [{"role": "system", "content": self._head(conversation)}]
         working += [m.to_chat() for m in conversation.request_history()]
@@ -228,6 +250,8 @@ class Engine:
                     if event.done:
                         tool_calls = event.tool_calls
                 turn_text += spoken
+                if cancelled is not None and cancelled():
+                    return
                 if hold:
                     hold = False
                     if _is_nothing_to_run(spoken):
@@ -251,16 +275,23 @@ class Engine:
                     return
                 any_tool_call = True
                 client_calls = [c for c in tool_calls if c.name in client_names]
-                got_images = self._record_tool_round(
+                got_images, stopped = self._record_tool_round(
                     conversation, working, Completion(content=spoken or None, tool_calls=tool_calls),
                     deferred=frozenset(c.id for c in client_calls), observer=observer,
+                    cancelled=cancelled,
                 )
                 if got_images:
                     next_phase = "vision"
+                if stopped or (cancelled is not None and cancelled()):
+                    conversation.seal_pending("tool was not run because response was cancelled")
+                    return
                 if client_calls:
                     # The turn ends here: the client owns the next step. The next
                     # response.create runs a fresh turn on the appended history.
                     for call in client_calls:
+                        if cancelled is not None and cancelled():
+                            conversation.seal_pending("tool was not run because response was cancelled")
+                            return
                         yield ClientToolCall(id=call.id, name=call.name, arguments=json.dumps(call.arguments))
                     return
         except Exception:

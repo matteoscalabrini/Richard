@@ -260,6 +260,7 @@ def test_http_get_reads_adjacent_custom_config_cache_without_synthesis(
     response = app.handle("GET", "/api/realtime/cues")
 
     assert response.status == 200
+    assert response.headers == {"Cache-Control": "no-store"}
     assert json.loads(response.body) == prepared
 
 

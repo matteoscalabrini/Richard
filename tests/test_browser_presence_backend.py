@@ -300,7 +300,6 @@ def test_blocked_old_tool_records_factual_result_before_new_input_and_cannot_emi
 
     brain = ScriptBrain([
         {"tool_calls": [ToolCall(id="old-tool", name="switch", arguments={})]},
-        {"deltas": ["Old answer."]},
         {"deltas": ["New answer."]},
     ])
     tts = RecordingTTS()
@@ -317,7 +316,7 @@ def test_blocked_old_tool_records_factual_result_before_new_input_and_cannot_emi
         assert [m["role"] for m in history[:4]] == ["user", "assistant", "tool", "user"]
         assert history[2]["tool_call_id"] == "old-tool" and history[2]["content"] == "switched"
         assert history[3]["content"] == "new request"
-        assert not any("Old answer" in text for text in tts.spoken)
+        assert len(brain.calls) == 2
     finally:
         session.close()
 
@@ -361,7 +360,7 @@ class ObserverEngine:
     def tool_names(self):
         return []
 
-    def respond_streaming(self, conversation, client_tools=None, observer=None):
+    def respond_streaming(self, conversation, client_tools=None, observer=None, cancelled=None):
         self.calls += 1
         self.seen.append([message.to_chat() for message in conversation.request_history()])
         if observer:
@@ -397,7 +396,7 @@ def test_buffered_legacy_context_does_not_become_an_unsolicited_retry_without_wa
     release = threading.Event()
 
     class BlockingEngine(ObserverEngine):
-        def respond_streaming(self, conversation, client_tools=None, observer=None):
+        def respond_streaming(self, conversation, client_tools=None, observer=None, cancelled=None):
             self.calls += 1
             entered.set()
             assert release.wait(5)

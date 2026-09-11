@@ -146,6 +146,7 @@
         state.playing = false;
         this.send({type: 'playback.update', response_id: responseId, playing: false});
       }
+      this._finishPlayback(responseId, state);
       return true;
     }
 
@@ -192,10 +193,12 @@
     }
 
     _finishPlayback(responseId, state) {
-      if (state.done && state.count === 0 && state.playing) {
+      if (!state.done || state.count !== 0) return;
+      if (state.playing) {
         state.playing = false;
         this.send({type: 'playback.update', response_id: responseId, playing: false});
       }
+      this.playbacks.delete(responseId);
     }
 
     _clips() {
@@ -268,26 +271,23 @@
         width: {ideal: 1920}, height: {ideal: 1080}, facingMode: 'user',
       };
       this.owners = new Map();
-      this.generations = new Map();
       this.current = null;
       this.pending = null;
     }
 
     async acquire(owner) {
-      const generation = (this.generations.get(owner) || 0) + 1;
-      this.generations.set(owner, generation);
-      this.owners.set(owner, generation);
+      const acquisition = {};
+      this.owners.set(owner, acquisition);
       try {
         const media = await this._ensure();
-        return this.owners.get(owner) === generation ? media : null;
+        return this.owners.get(owner) === acquisition ? media : null;
       } catch (error) {
-        if (this.owners.get(owner) === generation) this.owners.delete(owner);
+        if (this.owners.get(owner) === acquisition) this.owners.delete(owner);
         throw error;
       }
     }
 
     release(owner) {
-      this.generations.set(owner, (this.generations.get(owner) || 0) + 1);
       this.owners.delete(owner);
       if (!this.owners.size && this.current) this._dispose(this.current);
     }

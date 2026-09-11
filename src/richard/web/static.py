@@ -1003,7 +1003,7 @@ function setPath(o, p, v){ if (p.length === 1) { o[p[0]] = v; } else { o[p[0]] =
 function hm(){ const d = new Date(); return String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0'); }
 function esc(s){ const d = document.createElement('div'); d.textContent = s == null ? '' : s; return d.innerHTML; }
 
-async function getJSON(url){ const r = await fetch(url); if (!r.ok) throw new Error(await r.text()); return r.json(); }
+async function getJSON(url, options){ const r = await fetch(url, options); if (!r.ok) throw new Error(await r.text()); return r.json(); }
 async function sendJSON(url, method, body){
   const r = await fetch(url, {method, headers: {'Content-Type': 'application/json'}, body: body ? JSON.stringify(body) : undefined});
   const text = await r.text();
@@ -1603,7 +1603,7 @@ async function refreshCueBank(){
   const request = ++cueBankRequest;
   let next = {fingerprint: null, clips: []};
   try {
-    const data = await getJSON('/api/realtime/cues');
+    const data = await getJSON('/api/realtime/cues', {cache: 'no-store'});
     next = {fingerprint: data.fingerprint || null, clips: (data.clips || []).map(clip => ({
       id: clip.id, phase: clip.phase, sampleRate: clip.sample_rate, decoded: decodePreparedPcm(clip.audio),
     }))};

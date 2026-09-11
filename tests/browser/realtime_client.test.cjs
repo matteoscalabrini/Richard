@@ -184,6 +184,7 @@ test('playback completion waits for response.done and every scheduled source', (
   assert.deepEqual(h.sent, [{type: 'playback.update', response_id: 'r1', playing: true}]);
   h.controller.realAudioEnded('r1');
   assert.deepEqual(h.sent.at(-1), {type: 'playback.update', response_id: 'r1', playing: false});
+  assert.equal(h.controller.playbacks.size, 0);
 });
 
 test('queued real PCM blocks a tool cue until a fresh 1200 ms gap after drain', () => {
@@ -263,6 +264,7 @@ test('an empty protocol response without turn metadata still reaches its termina
   assert.equal(h.controller.responseCreated({id: 'empty'}), true);
   assert.equal(h.controller.responseDone({id: 'empty', status: 'completed'}), true);
   assert.equal(h.played.length, 0);
+  assert.equal(h.controller.playbacks.size, 0);
 });
 
 function deferred() {
@@ -305,6 +307,28 @@ test('release during unresolved camera acquisition cannot resurrect that owner',
   assert.equal(await acquiring, null);
   assert.equal(track.stopped, 1);
   assert.equal(camera.media(), null);
+});
+
+test('released unresolved camera owners leave no retained acquisition identities', async () => {
+  const pending = deferred();
+  const track = fakeVideoTrack();
+  const camera = new SharedCamera({
+    getUserMedia: () => pending.promise,
+    makeVideo: stream => ({stream, remove() {}, play: async () => {}}),
+  });
+  const acquisitions = [];
+  for (let index = 0; index < 100; index++) {
+    const owner = `voice-${index}`;
+    acquisitions.push(camera.acquire(owner));
+    camera.release(owner);
+  }
+  pending.resolve({getVideoTracks: () => [track], getTracks: () => [track]});
+  assert.deepEqual(await Promise.all(acquisitions), Array(100).fill(null));
+  const retainedMapEntries = Object.values(camera)
+    .filter(value => value instanceof Map)
+    .reduce((total, value) => total + value.size, 0);
+  assert.equal(retainedMapEntries, 0);
+  assert.equal(track.stopped, 1);
 });
 
 test('frame uploader uses one source, one in-flight request, and forces a fresh post after drain', async () => {

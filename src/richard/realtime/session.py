@@ -215,7 +215,7 @@ class RealtimeSession:
         with self._state_lock:
             active = self._turn_thread is not None
             queued = bool(self._queued_items)
-        if active and queued:
+        if queued:
             self._start_turn(None)
             return
         if active or self.state != "listening":
@@ -551,6 +551,7 @@ class RealtimeSession:
         try:
             for delta in self._engine.respond_streaming(
                 self.conversation, client_tools=self.client_tools, observer=activity,
+                cancelled=cancel.is_set,
             ):
                 if cancel.is_set() or not self._owns(token):
                     status = "cancelled"
@@ -640,6 +641,7 @@ class RealtimeSession:
                 if token is self._active_token and not cancel.is_set():
                     self.conversation.add_assistant(full)
         if status == "cancelled":
+            self.conversation.seal_pending("tool was not run because response was cancelled")
             self._emit(events.item_truncated(response_id))
         if (unsolicited and handed_to_client and status == "completed"
                 and not cancel.is_set() and owned):
