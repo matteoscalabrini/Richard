@@ -20,6 +20,11 @@ class MemoryProvider:
     def execute(self, name: str, arguments: dict) -> str:
         return self._tools.execute(name, arguments)
 
+    def context_revision(self) -> int:
+        """Bumped when a memory is revoked, so a pinned system head still carrying the
+        deleted fact is rebuilt on its next turn. Adding a memory does not bump it."""
+        return self._store.revision
+
     def context(self) -> str | None:
         memories = self._store.all()
         if memories:

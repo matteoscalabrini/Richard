@@ -66,7 +66,13 @@ class Conversation:
         # turn after a `remember` would re-prefill the whole prompt (2026-09-09: 0 cached
         # tokens on the turn after a memory write). New memories still reach the model
         # through the persisted tool result, and the next conversation gets a fresh head.
+        # Forgetting is the one exception: see pinned_head_revisions below.
         self.pinned_head: str | None = None
+        # The provider context revisions the pinned head was built from. A provider bumps
+        # its revision only when it revokes context (a forgotten memory), and only then is
+        # the head rebuilt — so a deleted fact cannot outlive its row, while remembering
+        # still leaves the prefix cache intact.
+        self.pinned_head_revisions: tuple[int, ...] = ()
 
     def add_user(self, content: str | list[dict]) -> None:
         self._history.append(Message(role="user", content=content))

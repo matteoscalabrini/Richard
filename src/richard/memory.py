@@ -34,6 +34,11 @@ class MemoryStore:
             "person TEXT NOT NULL DEFAULT 'you')"
         )
         self._conn.commit()
+        # Bumped only when a memory is revoked, never when one is added. Conversations pin
+        # their system head for prefix caching; adding a fact must not disturb that, but a
+        # forgotten fact must not outlive its row, so removal is the one event that forces
+        # already-pinned heads to be rebuilt. See Engine._head.
+        self.revision = 0
 
     def add(self, text: str, person: str = "you") -> Memory:
         created_at = datetime.now(timezone.utc).isoformat()
@@ -47,7 +52,10 @@ class MemoryStore:
     def remove(self, memory_id: int) -> bool:
         cur = self._conn.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
         self._conn.commit()
-        return cur.rowcount > 0
+        if cur.rowcount > 0:
+            self.revision += 1
+            return True
+        return False
 
     def all(self, person: str | None = None) -> list[Memory]:
         if person is None:

@@ -101,10 +101,28 @@ class Engine:
                 sections.append(ctx)
         return "\n\n".join(sections)
 
+    def _context_revisions(self) -> tuple[int, ...]:
+        """Revision of every provider that can revoke context it already published."""
+        return tuple(
+            provider.context_revision()
+            for provider in self._providers
+            if hasattr(provider, "context_revision")
+        )
+
     def _head(self, conversation: Conversation) -> str:
-        """System prompt for this conversation, assembled once and then byte-stable."""
-        if conversation.pinned_head is None:
+        """System prompt for this conversation, assembled once and then byte-stable.
+
+        Byte-stability is what keeps the prefix cache warm, so the head is deliberately not
+        rebuilt when a provider gains context (a new memory reaches the model through the
+        tool result instead). Revoked context is the exception: a provider bumps its
+        revision when it drops something, and the head is rebuilt once on the next turn so
+        a forgotten fact cannot outlive its row — in this conversation or any other that is
+        already open. That costs one re-prefill per forget, which is the intended trade.
+        """
+        revisions = self._context_revisions()
+        if conversation.pinned_head is None or conversation.pinned_head_revisions != revisions:
             conversation.pinned_head = self._system_prompt()
+            conversation.pinned_head_revisions = revisions
         return conversation.pinned_head
 
     def tool_names(self) -> list[str]:

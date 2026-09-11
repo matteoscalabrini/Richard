@@ -281,6 +281,63 @@ def test_system_head_is_pinned_per_conversation_not_per_engine():
     assert "likes tea" in brain.calls[2][0][0]["content"]  # new conversation: fresh head
 
 
+def test_forgetting_drops_the_fact_from_the_head_of_the_conversation_that_forgot_it():
+    brain = FakeBrain(
+        [
+            Completion(content="Hi.", tool_calls=[]),
+            Completion(content=None, tool_calls=[ToolCall(id="1", name="forget", arguments={"id": 1})]),
+            Completion(content="Forgotten.", tool_calls=[]),
+            Completion(content="Nothing.", tool_calls=[]),
+        ]
+    )
+    engine, store = _engine(brain)
+    store.add("the study lamp is blue")
+    conversation = Conversation()
+    conversation.add_user("hello")
+    engine.respond(conversation)
+    assert "the study lamp is blue" in brain.calls[0][0][0]["content"]
+    conversation.add_user("forget the lamp")
+    engine.respond(conversation)
+    conversation.add_user("what do you remember?")
+    engine.respond(conversation)
+    assert "the study lamp is blue" not in brain.calls[-1][0][0]["content"]
+
+
+def test_forgetting_between_turns_drops_the_fact_from_the_next_head():
+    brain = FakeBrain([Completion(content="Hi.", tool_calls=[]), Completion(content="Nothing.", tool_calls=[])])
+    store = MemoryStore(":memory:")
+    provider = MemoryProvider(store)
+    engine = Engine(brain, [provider], Personality())
+    fact = store.add("the study lamp is blue")
+    conversation = Conversation()
+    conversation.add_user("hello")
+    engine.respond(conversation)
+    assert "the study lamp is blue" in brain.calls[0][0][0]["content"]
+    provider.execute("forget", {"id": fact.id})
+    conversation.add_user("what do you remember?")
+    engine.respond(conversation)
+    assert "the study lamp is blue" not in brain.calls[-1][0][0]["content"]
+
+
+def test_forgetting_propagates_to_another_already_pinned_conversation():
+    brain = FakeBrain([Completion(content=str(i), tool_calls=[]) for i in range(4)])
+    store = MemoryStore(":memory:")
+    provider = MemoryProvider(store)
+    engine = Engine(brain, [provider], Personality())
+    fact = store.add("the study lamp is blue")
+    forgetful = Conversation()
+    forgetful.add_user("hello")
+    engine.respond(forgetful)
+    other = Conversation()
+    other.add_user("hello from elsewhere")
+    engine.respond(other)  # a second session, head pinned with the fact
+    assert "the study lamp is blue" in brain.calls[1][0][0]["content"]
+    provider.execute("forget", {"id": fact.id})
+    other.add_user("and now?")
+    engine.respond(other)
+    assert "the study lamp is blue" not in brain.calls[-1][0][0]["content"]
+
+
 def test_respond_handles_tool_results_with_images():
     from richard.brain.completion import ToolCall
     from richard.providers.base import ToolResult
