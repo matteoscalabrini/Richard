@@ -83,6 +83,37 @@ def test_service_emits_entered_identified_left_through_gate_and_sinks(tmp_path):
     assert svc.log.last_seen("matteo")["kind"] == "person_left"
 
 
+class SwitchingFaces:
+    """Returns Matteo for the first `switch_after` calls, then Anna."""
+
+    def __init__(self, switch_after):
+        self.switch_after = switch_after
+        self.calls = 0
+
+    def identify(self, rgb):
+        self.calls += 1
+        name = "Matteo" if self.calls <= self.switch_after else "Anna"
+        return [FaceMatch(box=(0.4, 0.2, 0.6, 0.5), name=name, score=0.9)]
+
+
+def test_identification_switches_subject_while_person_stays_present(tmp_path):
+    clock = Clock()
+    settings = Settings.from_table({"enter_debounce_s": 0.0, "leave_debounce_s": 10.0, "cooldown_s": 0.0, "identity_enabled": True})
+    svc = PerceptionService(settings, data_dir=tmp_path, clock=clock,
+                            person_detector=ScriptedPersons([PERSON]), identifier=SwitchingFaces(switch_after=2))
+    seen = []
+    svc.add_sink(seen.append)
+    for i in range(6):  # person never leaves; identifier switches from Matteo to Anna mid-stream
+        clock.t = 1000.0 + i * 1.0
+        svc.push_frame("browser", _jpeg((10, 10, 10)))
+        svc.process("browser")
+    kinds = [(e.kind, e.subject) for e in seen]
+    assert ("identified", "Matteo") in kinds
+    assert ("identified", "Anna") in kinds
+    assert not any(kind == "person_left" for kind, _ in kinds)
+    assert svc.presence() == [{"source": "browser", "subject": "Anna", "since": 1000.0}]
+
+
 def test_context_sink_takes_events_instead_of_loop_sinks(tmp_path):
     clock = Clock()
     settings = Settings.from_table({"enter_debounce_s": 0.0, "cooldown_s": 0.0})

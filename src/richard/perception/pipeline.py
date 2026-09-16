@@ -106,9 +106,10 @@ class SourcePipeline:
             except Exception as exc:  # a detector fault must not kill the pipeline
                 log.warning("perception: person detector failed on %s: %s", self.source_id, exc)
         names: list[str | None] = [None] * len(persons)
-        present = self.presence.present()
-        unresolved = bool(persons) and (not present or present[0].subject == "unknown")
-        if self._identifier is not None and self._settings.identity_enabled and unresolved and ts - self._last_face_at >= self._face_every:
+        # Keep identifying while anyone is present: a label assigned once used to be
+        # frozen until a 10 s leave, so two people swapping in front of the camera kept
+        # the first name (2026-09-16). One check per second is cheap enough.
+        if self._identifier is not None and self._settings.identity_enabled and persons and ts - self._last_face_at >= self._face_every:
             self._last_face_at = ts
             try:
                 matches = self._identifier.identify(frame.rgb)

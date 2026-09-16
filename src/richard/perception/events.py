@@ -92,10 +92,14 @@ class PresenceState:
         if seen:
             person.last_seen = ts
             for name in known:
-                person.votes[name] = person.votes.get(name, 0) + 1
-                if person.votes[name] >= 2 and person.subject != name:
-                    person.subject = name
-                    events.append(PerceptionEvent(ts, self.source_id, "identified", name, 0.9, persons[0].box))
+                if name == person.subject:
+                    person.votes = {}
+                else:
+                    person.votes = {name: person.votes.get(name, 0) + 1}
+                    if person.votes[name] >= 2:
+                        person.subject = name
+                        person.votes = {}
+                        events.append(PerceptionEvent(ts, self.source_id, "identified", name, 0.9, persons[0].box))
             if (self._report_unknown and person.subject == "unknown" and not person.unknown_reported
                     and ts - person.since >= self._unknown_after):
                 person.unknown_reported = True

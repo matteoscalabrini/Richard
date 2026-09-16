@@ -39,6 +39,21 @@ def test_identity_needs_two_agreeing_matches_then_names_the_presence():
     assert state.observe(1.5, [BOX], ["matteo"]) == []
 
 
+def test_presence_switches_subject_after_two_consecutive_votes():
+    state = PresenceState("browser", enter_debounce_s=0.0, leave_debounce_s=10.0)
+    box = Detection(score=0.9, box=(0.1, 0.1, 0.5, 0.5))
+    events = []
+    t = 0.0
+    for name in ["Matteo", "Matteo", "Matteo", "Anna", "Matteo", "Anna", "Anna", "Anna"]:
+        t += 1.0
+        events += [(e.kind, e.subject) for e in state.observe(t, [box], [name])]
+    assert ("identified", "Matteo") in events
+    assert ("identified", "Anna") in events
+    assert events.count(("identified", "Anna")) == 1          # one flip, after the two consecutive Anna votes
+    assert events.index(("identified", "Anna")) > events.index(("identified", "Matteo"))
+    assert state.present()[0].subject == "Anna"
+
+
 def test_unknown_person_is_reported_once_after_identity_fails_for_a_while():
     state = PresenceState("browser", enter_debounce_s=0.0, unknown_after_s=5.0)
     state.observe(0.0, [BOX], [None])
