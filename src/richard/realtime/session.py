@@ -686,6 +686,9 @@ class RealtimeSession:
             with self._state_lock:
                 if token is self._active_token and not cancel.is_set():
                     self.conversation.add_assistant(full)
+                    pruned = self.conversation.prune_images(keep=2)
+                    if pruned:
+                        log.info("pruned %d older image(s) from history", pruned)
         if status == "cancelled":
             self.conversation.seal_pending("tool was not run because response was cancelled")
             self._emit(events.item_truncated(response_id))

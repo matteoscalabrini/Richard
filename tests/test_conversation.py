@@ -131,3 +131,34 @@ def test_seal_pending_appends_error_results_and_returns_ids():
     assert json.loads(last.content) == {"error": "no result from client"}
     assert convo.pending_client_calls() == []
     assert convo.seal_pending("again") == []
+
+
+def test_prune_images_keeps_the_last_two_and_stubs_the_rest():
+    from richard.conversation import Conversation, user_parts
+
+    convo = Conversation()
+    convo.add_user(user_parts("look", ["data:image/jpeg;base64,AAA"]))
+    convo.add_assistant("A cup.")
+    convo.add_user(user_parts(None, ["data:image/jpeg;base64,BBB"]))
+    convo.add_assistant("A plant.")
+    convo.add_user(user_parts("and now", ["data:image/jpeg;base64,CCC"]))
+    convo.add_assistant("A book.")
+    assert convo.prune_images(keep=2) == 1
+    first = convo.history()[0].to_chat()["content"]
+    assert first == [{"type": "text", "text": "look [earlier picture no longer attached]"}]
+    later = [m.to_chat()["content"] for m in convo.history()[2:5:2]]
+    assert all(any(p["type"] == "image_url" for p in c) for c in later)
+    assert convo.prune_images(keep=2) == 0  # idempotent
+
+
+def test_prune_images_stubs_text_free_image_messages():
+    from richard.conversation import Conversation, user_parts
+
+    convo = Conversation()
+    for tag in ("AAA", "BBB", "CCC"):
+        convo.add_user(user_parts(None, [f"data:image/jpeg;base64,{tag}"]))
+        convo.add_assistant("seen")
+    assert convo.prune_images(keep=2) == 1
+    assert convo.history()[0].to_chat()["content"] == [
+        {"type": "text", "text": "[earlier picture no longer attached]"}
+    ]

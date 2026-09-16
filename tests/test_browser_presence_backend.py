@@ -646,3 +646,25 @@ def test_activity_event_shapes_and_playback_update_validation():
     assert parsed["response_id"] == "resp_1" and parsed["playing"] is False
     with pytest.raises(ValueError, match="playing"):
         events.parse_client_event('{"type":"playback.update","response_id":"resp_1","playing":0}')
+
+
+def test_session_prunes_old_images_after_a_completed_turn():
+    brain = ScriptBrain([{"deltas": ["One."]}, {"deltas": ["Two."]}, {"deltas": ["Three."]}])
+    session, emitted = make_session(Engine(brain, [NoTools()], Personality()))
+    try:
+        for index in range(1, 4):
+            session.create_item({"kind": "message", "content": [
+                {"type": "text", "text": f"look {index}"},
+                {"type": "image_url", "image_url": {"url": IMAGE}},
+            ]})
+            session.create_response()
+            wait_until(lambda: len([e for e in emitted if e["type"] == "response.done"]) == index)
+        history = [m.to_chat() for m in session.conversation.history()]
+        image_messages = [
+            m for m in history
+            if isinstance(m["content"], list) and any(p.get("type") == "image_url" for p in m["content"])
+        ]
+        assert len(image_messages) == 2
+        assert history[0]["content"] == [{"type": "text", "text": "look 1 [earlier picture no longer attached]"}]
+    finally:
+        session.close()

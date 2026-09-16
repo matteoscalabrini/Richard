@@ -9,6 +9,8 @@ DEFAULT_SYSTEM_PROMPT = (
     "Keep replies short and natural."
 )
 
+PRUNED_IMAGE_STUB = "[earlier picture no longer attached]"
+
 
 @dataclass(frozen=True)
 class Message:
@@ -125,6 +127,31 @@ class Conversation:
         for call_id in ids:
             self.add_tool_result(call_id, json.dumps({"error": reason}))
         return ids
+
+    def prune_images(self, keep: int = 2) -> int:
+        """Drop the image parts of all but the last `keep` image-carrying user messages.
+
+        Every picture ever taken used to stay in the replayed history, so a long session
+        carried an album the model had to attend to on every turn, with nothing marking
+        which frame was current. A pruned message keeps its text and gains a short stub
+        so the transcript still reads correctly. Changing an old message changes the
+        replayed prefix once, costing one re-prefill on the next turn; it happens only
+        when a third image is in history, so at most once per look after the second.
+        The caller decides when that cost is affordable.
+        """
+        indices = [
+            i for i, m in enumerate(self._history)
+            if m.role == "user" and isinstance(m.content, list)
+            and any(isinstance(p, dict) and p.get("type") == "image_url" for p in m.content)
+        ]
+        removed = 0
+        for i in indices[:-keep] if keep > 0 else indices:
+            message = self._history[i]
+            texts = [p["text"] for p in message.content if isinstance(p, dict) and p.get("type") == "text"]
+            removed += sum(1 for p in message.content if isinstance(p, dict) and p.get("type") == "image_url")
+            stub = " ".join([*texts, PRUNED_IMAGE_STUB]).strip()
+            self._history[i] = Message(role="user", content=[{"type": "text", "text": stub}])
+        return removed
 
     def messages(self) -> list[Message]:
         return [Message(role="system", content=self._system_prompt), *self._history]
