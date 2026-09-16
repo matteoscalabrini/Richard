@@ -24,5 +24,10 @@ class WebSearchPlugin:
         api_key = path.read_text().strip() if path.is_file() else ""
         if not api_key:
             raise ValueError(f"web_search: api key file {path} is missing or empty")
+        try:
+            max_results = int(ctx.config.get("max_results", 3))
+        except (TypeError, ValueError):
+            max_results = 3
+        max_results = max(1, min(10, max_results))
         client = self._client_factory(api_key)
-        return PluginParts(providers=[WebSearchProvider(client)])
+        return PluginParts(providers=[WebSearchProvider(client, max_results=max_results)])

@@ -30,8 +30,9 @@ WEB_SEARCH_SCHEMA = {
 
 
 class WebSearchProvider:
-    def __init__(self, client: TavilyClient) -> None:
+    def __init__(self, client: TavilyClient, *, max_results: int = 3) -> None:
         self._client = client
+        self._max_results = max_results
 
     def schemas(self) -> list[dict]:
         return [WEB_SEARCH_SCHEMA]
@@ -51,7 +52,7 @@ class WebSearchProvider:
             return "A search query is required."
         recent = bool(arguments.get("recent", False))
         try:
-            result = self._client.search(query, recent=recent)
+            result = self._client.search(query, recent=recent, max_results=self._max_results)
         except WebSearchError as exc:
             return str(exc)
         return self._format(result)

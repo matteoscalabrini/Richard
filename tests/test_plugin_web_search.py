@@ -83,6 +83,13 @@ def test_execute_passes_recent_flag_through():
     assert stub.calls[0] == {"query": "news today", "recent": True, "max_results": 3}
 
 
+def test_execute_passes_configured_max_results_through():
+    stub = StubClient(result=SearchResult(answer=None, results=[]))
+    provider = WebSearchProvider(stub, max_results=2)
+    provider.execute("web_search", {"query": "q"})
+    assert stub.calls[0] == {"query": "q", "recent": False, "max_results": 2}
+
+
 def test_execute_reports_errors_from_the_client():
     stub = StubClient(error=WebSearchError("web search unreachable"))
     provider = WebSearchProvider(stub)
@@ -125,6 +132,20 @@ def test_plugin_build_passes_the_stripped_key_to_the_client_factory(tmp_path):
     )
     plugin.build(ctx)
     assert seen["api_key"] == "secret-key"
+
+
+def test_plugin_build_honours_max_results_from_config(tmp_path):
+    key_file = tmp_path / "tavily.key"
+    key_file.write_text("secret-key\n")
+    stub = StubClient(result=SearchResult(answer=None, results=[]))
+    plugin = WebSearchPlugin(client_factory=lambda api_key, **kw: stub)
+    ctx = PluginContext(
+        config={"api_key_file": str(key_file), "max_results": 5},
+        persona_name="R", data_dir=tmp_path, write=lambda s: None,
+    )
+    parts = plugin.build(ctx)
+    parts.providers[0].execute("web_search", {"query": "q"})
+    assert stub.calls[0]["max_results"] == 5
 
 
 def test_plugin_build_raises_when_key_file_is_missing(tmp_path):
