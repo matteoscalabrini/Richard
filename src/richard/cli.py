@@ -865,6 +865,7 @@ def _run_serve(write: Callable[[str], None] = print) -> int:
             transcriber = TurnTranscriber(
                 config.voice.stt_model,
                 language=None if config.voice.language == "auto" else config.voice.language,
+                languages=tuple(config.voice.languages),
             )
             factory = _realtime_session_factory(
                 config, brain=brain, providers_fn=_serve_providers, synth=synth,

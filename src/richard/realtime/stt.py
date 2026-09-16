@@ -24,11 +24,13 @@ class Transcription:
 class TurnTranscriber:
     def __init__(self, model: str = "large-v3-turbo", *, device: str = "auto",
                  compute_type: str = "default", language: str | None = None,
+                 languages: tuple[str, ...] = ("it", "en"),
                  _model=None) -> None:
         self._model_name = model
         self._device = device
         self._compute_type = compute_type
         self._language = language
+        self._languages = tuple(languages)
         self._model = _model
         self._lock = threading.Lock()
 
@@ -41,20 +43,42 @@ class TurnTranscriber:
             )
         return self._model
 
+    def _resolve_language(self, model, audio) -> str | None:
+        """The language to force on transcribe(): the configured hint, or — when
+        auto-detecting among a restricted set — the allowed language with the
+        highest probability from detect_language(), falling back to the first
+        allowed language if detection is unavailable or errors out."""
+        if self._language is not None or not self._languages:
+            return self._language
+        try:
+            _, _, all_probs = model.detect_language(audio)
+        except Exception:
+            return self._languages[0]
+        probs = {code: prob for code, prob in all_probs}
+        allowed = [(code, probs.get(code, 0.0)) for code in self._languages]
+        return max(allowed, key=lambda cp: cp[1])[0]
+
     def _decode(self, pcm: bytes) -> Transcription:
         if not pcm:
             return Transcription("", None)
         audio = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
         with self._lock:
-            segments, info = self._ensure().transcribe(
+            model = self._ensure()
+            language = self._resolve_language(model, audio)
+            segments, info = model.transcribe(
                 audio,
                 beam_size=1,
-                language=self._language,
+                language=language,
                 vad_filter=False,  # endpointing already ran Silero; don't double-gate
                 condition_on_previous_text=False,
             )
-            language = getattr(info, "language", None) or self._language
-            return Transcription("".join(s.text for s in segments).strip(), language)
+            kept = [
+                s for s in segments
+                if getattr(s, "no_speech_prob", 0.0) <= 0.6
+                and getattr(s, "avg_logprob", 0.0) >= -1.0
+            ]
+            language = getattr(info, "language", None) or language
+            return Transcription("".join(s.text for s in kept).strip(), language)
 
     def partial(self, pcm: bytes) -> str:
         return self._decode(pcm).text

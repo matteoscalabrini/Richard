@@ -268,6 +268,19 @@ def test_realtime_and_language_roundtrip(tmp_path):
     assert loaded.voice.endpoint_silence_ms == 300
 
 
+def test_voice_languages_defaults_and_roundtrip(tmp_path):
+    from richard.config import Config, load_config, save_config
+
+    path = tmp_path / "config.toml"
+    config = load_config(path)
+    assert config.voice.languages == ["it", "en"]
+    cfg = Config()
+    cfg.voice.languages = ["en", "fr"]
+    save_config(cfg, path)
+    loaded = load_config(path)
+    assert loaded.voice.languages == ["en", "fr"]
+
+
 def test_voice_remote_model_language_instructions_defaults():
     from richard.config import Voice
 

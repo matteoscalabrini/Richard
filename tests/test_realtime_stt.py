@@ -5,17 +5,20 @@ from richard.realtime.stt import TurnTranscriber
 
 
 class FakeSegment:
-    def __init__(self, text):
+    def __init__(self, text, no_speech_prob=0.0, avg_logprob=0.0):
         self.text = text
+        self.no_speech_prob = no_speech_prob
+        self.avg_logprob = avg_logprob
 
 
 class FakeModel:
-    def __init__(self):
+    def __init__(self, segments=None):
         self.calls = []
+        self._segments = segments if segments is not None else [FakeSegment(" hello"), FakeSegment(" there")]
 
     def transcribe(self, audio, **kwargs):
         self.calls.append((audio, kwargs))
-        return iter([FakeSegment(" hello"), FakeSegment(" there")]), None
+        return iter(self._segments), None
 
 
 def _pcm(n=16000):
@@ -64,3 +67,36 @@ def test_final_language_belongs_to_its_decode_and_legacy_text_stays_compatible()
     assert (first.text, first.language) == ("hello there", "it")
     assert second.language == "en"
     assert t.final(_pcm()) == "hello there"
+
+
+def test_auto_language_is_restricted_to_allowed_set():
+    model = FakeModel([FakeSegment("ciao")])
+    model.detect_language = lambda audio: ("tr", 0.51, [("tr", 0.51), ("it", 0.30), ("en", 0.10)])
+    t = TurnTranscriber("base", language=None, languages=("it", "en"), _model=model)
+    out = t.final_with_language(b"\x00" * 3200)
+    assert out.language == "it"
+    assert model.calls[-1][1]["language"] == "it"
+
+
+def test_hallucinated_segments_are_dropped():
+    segs = [
+        FakeSegment("İzlediğiniz için teşekkür ederim.", no_speech_prob=0.9, avg_logprob=-0.4),
+        FakeSegment("come va", no_speech_prob=0.1, avg_logprob=-0.3),
+        FakeSegment("garbage", no_speech_prob=0.1, avg_logprob=-1.5),
+    ]
+    model = FakeModel(segs)
+    t = TurnTranscriber("base", language="it", _model=model)
+    assert t.final(b"\x00" * 3200) == "come va"
+
+
+def test_detect_language_failure_falls_back_to_first_allowed():
+    model = FakeModel([FakeSegment("ciao")])
+
+    def _boom(audio):
+        raise RuntimeError("no detector")
+
+    model.detect_language = _boom
+    t = TurnTranscriber("base", language=None, languages=("it", "en"), _model=model)
+    out = t.final_with_language(b"\x00" * 3200)
+    assert out.language == "it"
+    assert model.calls[-1][1]["language"] == "it"

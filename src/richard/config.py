@@ -76,6 +76,7 @@ class Voice:
     output_device: str | None = None
     language: str = "auto"  # STT language hint + TTS voice selection; "auto" = detect per utterance
     endpoint_silence_ms: int = 400  # realtime endpointing: trailing silence that ends an utterance
+    languages: list[str] = field(default_factory=lambda: ["it", "en"])  # allowed STT languages when auto-detecting
 
 
 @dataclass
@@ -324,6 +325,7 @@ def load_config(path: Path | None = None) -> Config:
         output_device=v.get("output_device", Voice.output_device),
         language=v.get("language", Voice.language) or Voice.language,
         endpoint_silence_ms=int(v.get("endpoint_silence_ms", Voice.endpoint_silence_ms)),
+        languages=[str(x) for x in v.get("languages") or Voice().languages],
     )
     s = data.get("satellite", {})
     satellite = Satellite(
@@ -476,6 +478,7 @@ def save_config(config: Config, path: Path | None = None) -> None:
         "samplerate": config.voice.samplerate,
         "language": config.voice.language,
         "endpoint_silence_ms": config.voice.endpoint_silence_ms,
+        "languages": config.voice.languages,
     }
     if config.voice.input_device is not None:
         voice_table["input_device"] = config.voice.input_device
