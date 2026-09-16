@@ -25,7 +25,7 @@ _VISUAL_RE = re.compile(
     r")"
 )
 
-_SCENE_CHANGE_RE = re.compile(r"\bthe scene changed\b")
+_SCENE_CHANGE_RE = re.compile(r"\bthe (?:scene|camera view) changed\b")
 
 
 def wants_frame(user_text: str | None, *, unsolicited: bool, context: str | None) -> bool:

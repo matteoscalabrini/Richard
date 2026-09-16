@@ -10,10 +10,10 @@ def kinds(events):
 
 def test_event_line_and_dict():
     e = PerceptionEvent(ts=12.5, source_id="browser", kind="identified", subject="matteo", confidence=0.91)
-    assert e.line() == "matteo recognised (browser)"
-    assert PerceptionEvent(1.0, "browser", "person_entered", "unknown").line() == "someone entered (browser)"
-    assert PerceptionEvent(1.0, "browser", "person_left", "matteo").line() == "matteo left (browser)"
-    assert PerceptionEvent(1.0, "browser", "stillness", "12.0").line() == "nothing has moved for 12.0 minutes (browser)"
+    assert e.line() == "face recognition guesses matteo is in frame; unverified, look to confirm (browser)"
+    assert PerceptionEvent(1.0, "browser", "person_entered", "unknown").line() == "someone appeared in the camera frame (browser)"
+    assert PerceptionEvent(1.0, "browser", "person_left", "matteo").line() == "matteo is no longer in the camera frame (browser)"
+    assert PerceptionEvent(1.0, "browser", "stillness", "12.0").line() == "nothing has moved in the camera frame for 12.0 minutes (browser)"
     assert e.to_dict()["kind"] == "identified" and e.to_dict()["confidence"] == 0.91
     assert e.kind in KINDS
 
@@ -79,3 +79,19 @@ def test_unknown_person_is_never_reported_when_identity_is_off():
     state.observe(0.0, [BOX], [None])
     assert state.observe(6.0, [BOX], [None]) == []
     assert state.observe(30.0, [BOX], [None]) == []
+
+
+def test_event_lines_read_as_camera_observations_not_facts():
+    from richard.perception.events import PerceptionEvent
+
+    def line(kind, subject=""):
+        return PerceptionEvent(0.0, "browser", kind, subject).line()
+
+    assert line("person_entered", "Matteo") == "Matteo appeared in the camera frame (browser)"
+    assert line("person_entered") == "someone appeared in the camera frame (browser)"
+    assert line("person_left", "Matteo") == "Matteo is no longer in the camera frame (browser)"
+    assert line("identified", "Anna") == "face recognition guesses Anna is in frame; unverified, look to confirm (browser)"
+    assert line("unknown_person") == "a person the face recognition does not know is in the camera frame (browser)"
+    assert line("scene_changed") == "the camera view changed (browser)"
+    assert line("motion_after_stillness") == "movement in the camera frame after a long stillness (browser)"
+    assert line("stillness", "12") == "nothing has moved in the camera frame for 12 minutes (browser)"

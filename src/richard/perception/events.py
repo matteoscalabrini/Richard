@@ -36,13 +36,13 @@ class PerceptionEvent:
     def line(self) -> str:
         who = "someone" if self.subject in ("", "unknown") else self.subject
         text = {
-            "person_entered": f"{who} entered",
-            "person_left": f"{who} left",
-            "identified": f"{self.subject} recognised",
-            "unknown_person": "an unknown person is here",
-            "motion_after_stillness": "movement after a long stillness",
-            "scene_changed": "the scene changed",
-            "stillness": f"nothing has moved for {self.subject} minutes",
+            "person_entered": f"{who} appeared in the camera frame",
+            "person_left": f"{who} is no longer in the camera frame",
+            "identified": f"face recognition guesses {self.subject} is in frame; unverified, look to confirm",
+            "unknown_person": "a person the face recognition does not know is in the camera frame",
+            "motion_after_stillness": "movement in the camera frame after a long stillness",
+            "scene_changed": "the camera view changed",
+            "stillness": f"nothing has moved in the camera frame for {self.subject} minutes",
         }.get(self.kind, self.kind)
         return f"{text} ({self.source_id})"
 

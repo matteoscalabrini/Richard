@@ -35,5 +35,6 @@ def test_ordinary_turns_do_not_want_a_frame(text):
 
 def test_unsolicited_scene_change_wants_a_frame_but_arrivals_do_not():
     assert wants_frame(None, unsolicited=True, context="[perception] 10:02 the scene changed (browser)")
+    assert wants_frame(None, unsolicited=True, context="[perception] 10:02 the camera view changed (browser)")
     assert not wants_frame(None, unsolicited=True, context="[perception] 10:02 matteo entered (browser)")
     assert not wants_frame(None, unsolicited=False, context=None)

@@ -93,7 +93,7 @@ def test_context_sink_takes_events_instead_of_loop_sinks(tmp_path):
     svc.set_context_sink(lambda line, wake=False: lines.append((line, wake)) or True)
     svc.push_frame("browser", _jpeg((0, 0, 0)))
     svc.process("browser")
-    assert lines == [("someone entered (browser)", True)]  # an arrival wakes the session
+    assert lines == [("someone appeared in the camera frame (browser)", True)]  # an arrival wakes the session
     assert loop_events == []
     svc.set_context_sink(lambda line, wake=False: False)
     svc._pipelines["browser"]._person_detector = ScriptedPersons([[]])
@@ -120,7 +120,7 @@ def test_context_sink_receives_source_and_kind_for_routing(tmp_path):
     svc.push_frame("browser-alpha", _jpeg((0, 0, 0)))
     svc.process("browser-alpha")
     assert offered == [
-        ("someone entered (browser-alpha)", True, "browser-alpha", "person_entered")
+        ("someone appeared in the camera frame (browser-alpha)", True, "browser-alpha", "person_entered")
     ]
 
 
