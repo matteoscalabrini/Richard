@@ -865,3 +865,21 @@ def test_turn_logs_timing_marks(caplog):
         assert "stt=" in lines[0] and "first_token=" in lines[0] and "first_audio=" in lines[0]
     finally:
         session.close()
+
+
+def test_create_response_logs_its_own_timing_without_stt(caplog):
+    import logging
+
+    session, emitted, done = collect_session(detector=ScriptedDetector([]))
+    try:
+        session.create_item({"kind": "message", "content": "hello richard"})
+        time.sleep(0.2)
+        with caplog.at_level(logging.INFO, logger="richard.realtime"):
+            session.create_response()
+            wait(done)
+        lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("turn timing:")]
+        assert len(lines) == 1
+        assert "first_token=" in lines[0] and "first_audio=" in lines[0]
+        assert "stt=" not in lines[0]
+    finally:
+        session.close()

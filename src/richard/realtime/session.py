@@ -98,7 +98,6 @@ class RealtimeSession:
         self._playback_response_id: str | None = None
         self._frames_since_partial = 0
         self._input_item_id = ""
-        self._timing = TurnTiming()
         self._audio_thread = threading.Thread(target=self._audio_worker, daemon=True)
         self._audio_thread.start()
         if registry is not None:
@@ -236,8 +235,9 @@ class RealtimeSession:
             self._emit(events.response_created(response_id))
             self._emit(events.response_done(response_id))
             return
-        self._timing.start()
-        self._start_turn(None)
+        timing = TurnTiming()
+        timing.start()
+        self._start_turn(None, timing=timing)
 
     def cancel_response(self) -> None:
         with self._state_lock:
@@ -351,11 +351,12 @@ class RealtimeSession:
                 self._frames_since_partial = 0
                 self._emit(events.speech_started())
             elif event[0] == "utterance":
-                self._timing.start()
+                timing = TurnTiming()
+                timing.start()
                 self._emit(events.speech_stopped())
                 pcm = event[1]
                 final = getattr(self._transcriber, "final_with_language", self._transcriber.final)
-                self._start_turn(lambda final=final, pcm=pcm: final(pcm))
+                self._start_turn(lambda final=final, pcm=pcm: final(pcm), timing=timing)
         if self._detector.in_speech:
             self._frames_since_partial += 1
             if self._frames_since_partial >= self._partial_every:
@@ -369,16 +370,24 @@ class RealtimeSession:
 
     # -- turns ------------------------------------------------------------------
 
-    def _start_turn(self, get_transcript, *, announce_transcript: bool = True) -> None:
+    def _start_turn(self, get_transcript, *, announce_transcript: bool = True,
+                     timing: TurnTiming | None = None) -> None:
         """Queue the newest turn on one serial worker.
 
         Replacing a queued request never starts a second inference worker. The active
         request keeps its own cancellation Event, so it cannot clear or emit through
         the successor's ownership.
+
+        Each turn carries its own TurnTiming: a shared instance would let a
+        cancelled-but-not-yet-exited turn on the turn thread read or clear the marks
+        of the turn that superseded it during barge-in.
         """
+        if timing is None:
+            timing = TurnTiming()
+            timing.start()
         token = object()
         cancel = threading.Event()
-        request = (token, cancel, get_transcript, announce_transcript, self._input_item_id)
+        request = (token, cancel, get_transcript, announce_transcript, self._input_item_id, timing)
         with self._state_lock:
             self._interrupt.set()
             self._active_token = token
@@ -409,18 +418,21 @@ class RealtimeSession:
                         cancel = threading.Event()
                         self._active_token = token
                         self._interrupt = cancel
+                        retry_timing = TurnTiming()
+                        retry_timing.start()
                         self._pending_turn = (
-                            token, cancel, None, True, self._input_item_id,
+                            token, cancel, None, True, self._input_item_id, retry_timing,
                         )
                         self.state = "thinking"
                         continue
                     if self._turn_thread is threading.current_thread():
                         self._turn_thread = None
                     break
-            token, cancel, get_transcript, announce_transcript, item_id = request
-            self._run_turn(token, cancel, get_transcript, announce_transcript, item_id)
+            token, cancel, get_transcript, announce_transcript, item_id, timing = request
+            self._run_turn(token, cancel, get_transcript, announce_transcript, item_id, timing)
 
-    def _run_turn(self, token, cancel, get_transcript, announce_transcript, item_id) -> None:
+    def _run_turn(self, token, cancel, get_transcript, announce_transcript, item_id,
+                  timing: TurnTiming) -> None:
         queued = []
         with self._state_lock:
             if token is not self._active_token or self._closed.is_set():
@@ -433,11 +445,11 @@ class RealtimeSession:
             if cancel.is_set() or not self._owns(token):
                 return
             if get_transcript is None:
-                self._respond(None, token, cancel)
+                self._respond(None, token, cancel, timing)
                 return
             try:
                 transcript = get_transcript()
-                self._timing.mark("stt")
+                timing.mark("stt")
             except Exception as exc:
                 self._emit_owned(
                     token,
@@ -456,7 +468,7 @@ class RealtimeSession:
                 self._cue_language = language
                 if announce_transcript:
                     self._emit(events.transcription_completed(item_id, transcript))
-            self._respond(transcript, token, cancel)
+            self._respond(transcript, token, cancel, timing)
 
     def _owns(self, token) -> bool:
         with self._state_lock:
@@ -502,7 +514,8 @@ class RealtimeSession:
             {"type": "image_url", "image_url": {"url": data_url(jpeg)}},
         ]
 
-    def _respond(self, user_text: str | None, token, cancel: threading.Event) -> None:
+    def _respond(self, user_text: str | None, token, cancel: threading.Event,
+                 timing: TurnTiming) -> None:
         with self._state_lock:
             if (token is not self._active_token or cancel.is_set()
                     or self._closed.is_set()):
@@ -566,7 +579,7 @@ class RealtimeSession:
                 self.conversation, client_tools=self.client_tools, observer=activity,
                 cancelled=cancel.is_set,
             ):
-                self._timing.mark("first_token")
+                timing.mark("first_token")
                 if cancel.is_set() or not self._owns(token):
                     status = "cancelled"
                     break
@@ -584,7 +597,7 @@ class RealtimeSession:
                         self._continuation_open = True
                     tail = chunker.flush()
                     if tail and not self._speak(
-                        response_id, tail, token, cancel, activity,
+                        response_id, tail, token, cancel, activity, timing=timing,
                     ):
                         status = "cancelled"
                         break
@@ -595,7 +608,7 @@ class RealtimeSession:
                 full += delta
                 self._emit_owned(token, events.text_delta(response_id, delta), cancel)
                 if not all(
-                    self._speak(response_id, c, token, cancel, activity)
+                    self._speak(response_id, c, token, cancel, activity, timing=timing)
                     for c in chunker.feed(delta)
                 ):
                     status = "cancelled"
@@ -608,7 +621,7 @@ class RealtimeSession:
                     self._emit_owned(token, events.text_delta(response_id, held), cancel)
                     if not all(
                         self._speak(
-                            response_id, c, token, cancel, activity,
+                            response_id, c, token, cancel, activity, timing=timing,
                         )
                         for c in chunker.feed(held)
                     ):
@@ -620,7 +633,7 @@ class RealtimeSession:
             if status == "completed" and not handed_to_client:
                 tail = chunker.flush()
                 if tail and not self._speak(
-                    response_id, tail, token, cancel, activity,
+                    response_id, tail, token, cancel, activity, timing=timing,
                 ):
                     status = "cancelled"
         except BrainRejectedInput as exc:
@@ -628,14 +641,14 @@ class RealtimeSession:
             activity("error")
             self._emit_owned(token, events.error(str(exc), code="brain_rejected_input"))
             self._speak(
-                response_id, IMAGE_REJECTED_LINE, token, cancel, activity,
+                response_id, IMAGE_REJECTED_LINE, token, cancel, activity, timing=timing,
             )
         except BrainUnreachable:
             status = "failed"
             activity("error")
             self._emit_owned(token, events.error("brain unreachable", code="brain_unreachable"))
             self._speak(
-                response_id, BRAIN_DOWN_LINE, token, cancel, activity,
+                response_id, BRAIN_DOWN_LINE, token, cancel, activity, timing=timing,
             )
         except Exception as exc:
             status = "failed"
@@ -643,7 +656,7 @@ class RealtimeSession:
             self._emit_owned(token, events.error(f"engine failed: {exc}", code="engine_error"))
             # Audible failure: silence here reads as a crash to the user.
             self._speak(
-                response_id, TURN_FAILED_LINE, token, cancel, activity,
+                response_id, TURN_FAILED_LINE, token, cancel, activity, timing=timing,
             )
         # A turn handed to the client already stored its text inside the tool-call
         # message; storing it again would put a plain reply after the call.
@@ -670,13 +683,13 @@ class RealtimeSession:
         # told the response is still active.
         if owned:
             self.state = "listening"
-        line = self._timing.line()
+        line = timing.line()
         if line:
             log.info("%s status=%s", line, status)
         self._emit(events.response_done(response_id, status))
 
     def _speak(self, response_id: str, text: str, token, cancel: threading.Event,
-               activity) -> bool:
+               activity, timing: TurnTiming | None = None) -> bool:
         """Synth one chunk and emit it. False = interrupted (stop the response)."""
         if cancel.is_set() or not self._owns(token):
             return False
@@ -698,5 +711,6 @@ class RealtimeSession:
             if self.playback_ack:
                 self._playback_response_id = response_id
             self._emit(events.audio_delta(response_id, pcm))
-            self._timing.mark("first_audio")
+            if timing is not None:
+                timing.mark("first_audio")
         return True
