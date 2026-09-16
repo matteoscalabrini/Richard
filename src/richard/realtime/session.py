@@ -23,6 +23,7 @@ from richard.perception.image import data_url
 from richard.realtime import events
 from richard.realtime.chunker import ProgressiveChunker
 from richard.realtime.stt import Transcription
+from richard.realtime.timing import TurnTiming
 from richard.realtime.vad import FRAME_BYTES
 
 BRAIN_DOWN_LINE = "I can't reach my brain right now."
@@ -97,6 +98,7 @@ class RealtimeSession:
         self._playback_response_id: str | None = None
         self._frames_since_partial = 0
         self._input_item_id = ""
+        self._timing = TurnTiming()
         self._audio_thread = threading.Thread(target=self._audio_worker, daemon=True)
         self._audio_thread.start()
         if registry is not None:
@@ -234,6 +236,7 @@ class RealtimeSession:
             self._emit(events.response_created(response_id))
             self._emit(events.response_done(response_id))
             return
+        self._timing.start()
         self._start_turn(None)
 
     def cancel_response(self) -> None:
@@ -348,6 +351,7 @@ class RealtimeSession:
                 self._frames_since_partial = 0
                 self._emit(events.speech_started())
             elif event[0] == "utterance":
+                self._timing.start()
                 self._emit(events.speech_stopped())
                 pcm = event[1]
                 final = getattr(self._transcriber, "final_with_language", self._transcriber.final)
@@ -433,6 +437,7 @@ class RealtimeSession:
                 return
             try:
                 transcript = get_transcript()
+                self._timing.mark("stt")
             except Exception as exc:
                 self._emit_owned(
                     token,
@@ -561,6 +566,7 @@ class RealtimeSession:
                 self.conversation, client_tools=self.client_tools, observer=activity,
                 cancelled=cancel.is_set,
             ):
+                self._timing.mark("first_token")
                 if cancel.is_set() or not self._owns(token):
                     status = "cancelled"
                     break
@@ -664,6 +670,9 @@ class RealtimeSession:
         # told the response is still active.
         if owned:
             self.state = "listening"
+        line = self._timing.line()
+        if line:
+            log.info("%s status=%s", line, status)
         self._emit(events.response_done(response_id, status))
 
     def _speak(self, response_id: str, text: str, token, cancel: threading.Event,
@@ -689,4 +698,5 @@ class RealtimeSession:
             if self.playback_ack:
                 self._playback_response_id = response_id
             self._emit(events.audio_delta(response_id, pcm))
+            self._timing.mark("first_audio")
         return True

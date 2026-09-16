@@ -850,3 +850,18 @@ def test_user_input_during_camera_handoff_takes_priority():
         assert "".join(tts.spoken) == "NOTHING_TO_SAY"
     finally:
         session.close()
+
+
+def test_turn_logs_timing_marks(caplog):
+    import logging
+
+    session, emitted, done = collect_session()
+    try:
+        with caplog.at_level(logging.INFO, logger="richard.realtime"):
+            session.feed_audio(FRAME * 2)
+            wait(done)
+        lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("turn timing:")]
+        assert len(lines) == 1
+        assert "stt=" in lines[0] and "first_token=" in lines[0] and "first_audio=" in lines[0]
+    finally:
+        session.close()
