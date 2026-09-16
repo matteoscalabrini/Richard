@@ -66,6 +66,11 @@ class LlamaCppBrain:
         # controls a llama.cpp/SGLang chat template accepts). Required keys always win.
         self._extra_body = dict(extra_body or {})
 
+    def set_extra_body(self, extra_body: dict | None) -> None:
+        """Replace the request-body knobs merged into every subsequent request —
+        lets a live thinking-effort setting reach the running brain without a restart."""
+        self._extra_body = dict(extra_body or {})
+
     def complete(self, messages: list[dict], tools: list[dict] | None = None) -> Completion:
         # cache_prompt: llama.cpp reuses the prompt KV cache across turns — the system
         # prompt + history prefix is identical every turn, so this cuts TTFT sharply.

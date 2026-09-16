@@ -57,6 +57,7 @@ def _app(
     entities=(),
     voice_library_factory=None,
     plugin_records=None,
+    apply_brain=None,
 ):
     config_path = tmp_path / "config.toml"
     save_config(Config(), config_path)
@@ -68,6 +69,8 @@ def _app(
         kwargs["voice_library_factory"] = voice_library_factory
     if plugin_records is not None:
         kwargs["plugin_records"] = plugin_records
+    if apply_brain is not None:
+        kwargs["apply_brain"] = apply_brain
     return WebApp(
         config_path=config_path,
         memory_store=memory or MemoryStore(":memory:"),
@@ -257,6 +260,30 @@ def test_put_config_rejects_malformed_scalar(tmp_path):
     assert resp.status == 400
     assert "invalid config value" in _body(resp)["error"]
     assert load_config(app._config_path).llm_timeout == before
+
+
+def test_put_config_thinking_effort_applies_to_running_brain(tmp_path):
+    applied = []
+    app = _app(tmp_path, apply_brain=lambda cfg: applied.append(cfg))
+    resp = app.handle(
+        "PUT", "/api/config", json.dumps({"llm_thinking_effort": "medium"}).encode()
+    )
+    assert resp.status == 200
+    data = _body(resp)
+    assert data["changed"] == ["llm_thinking_effort"]
+    assert data["config"]["llm_thinking_effort"] == "medium"
+    reloaded = load_config(app._config_path)
+    assert reloaded.llm_thinking_effort == "medium"
+    assert len(applied) == 1
+    assert applied[0].llm_extra_body["chat_template_kwargs"]["reasoning_effort"] == "medium"
+
+
+def test_put_config_thinking_effort_rejects_invalid_value(tmp_path):
+    app = _app(tmp_path)
+    resp = app.handle(
+        "PUT", "/api/config", json.dumps({"llm_thinking_effort": "turbo"}).encode()
+    )
+    assert resp.status == 400
 
 
 def test_put_config_clears_api_key_with_empty_string(tmp_path):

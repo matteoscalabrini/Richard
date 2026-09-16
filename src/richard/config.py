@@ -18,6 +18,17 @@ def clamp_dial(value: object) -> int:
     return max(0, min(100, n))
 
 
+def thinking_kwargs(level: str) -> dict:
+    """chat_template_kwargs for a thinking-effort level: off disables thinking,
+    low/medium/high enable it at that reasoning_effort, "" contributes nothing
+    (the config file's own chat_template_kwargs, if any, wins)."""
+    if level == "off":
+        return {"enable_thinking": False}
+    if level in ("low", "medium", "high"):
+        return {"enable_thinking": True, "reasoning_effort": level}
+    return {}
+
+
 @dataclass
 class Personality:
     name: str = "Richard"
@@ -172,6 +183,7 @@ class Config:
     llm_api_key: str | None = None
     llm_timeout: float = 180.0
     llm_extra_body: dict = field(default_factory=dict)  # [llm_extra_body] table
+    llm_thinking_effort: str = ""  # "" (config file wins) | off | low | medium | high
     timezone: str = ""  # IANA name (e.g. "Europe/Rome"); "" uses the system's local zone
     personality: Personality = field(default_factory=Personality)
     voice: Voice = field(default_factory=Voice)
@@ -327,6 +339,7 @@ def load_config(path: Path | None = None) -> Config:
         llm_api_key=data.get("llm_api_key", Config.llm_api_key),
         llm_timeout=float(data.get("llm_timeout", Config.llm_timeout)),
         llm_extra_body=dict(data.get("llm_extra_body") or {}),
+        llm_thinking_effort=data.get("llm_thinking_effort", Config.llm_thinking_effort) or Config.llm_thinking_effort,
         timezone=data.get("timezone", Config.timezone),
         personality=personality,
         voice=voice,
@@ -336,6 +349,15 @@ def load_config(path: Path | None = None) -> Config:
         brains=brains,
         plugins=plugins,
     )
+    if config.llm_thinking_effort in ("off", "low", "medium", "high"):
+        existing = config.llm_extra_body.get("chat_template_kwargs")
+        existing = dict(existing) if isinstance(existing, dict) else {}
+        if config.llm_thinking_effort == "off":
+            existing.pop("reasoning_effort", None)
+        config.llm_extra_body["chat_template_kwargs"] = {
+            **existing,
+            **thinking_kwargs(config.llm_thinking_effort),
+        }
     # Environment overrides take precedence over the file.
     config.llm_endpoint = os.environ.get("RICHARD_LLM_ENDPOINT", config.llm_endpoint)
     config.llm_model = os.environ.get("RICHARD_LLM_MODEL", config.llm_model)
@@ -381,6 +403,8 @@ def save_config(config: Config, path: Path | None = None) -> None:
         data["llm_api_key"] = config.llm_api_key
     if config.llm_extra_body:
         data["llm_extra_body"] = config.llm_extra_body
+    if config.llm_thinking_effort:
+        data["llm_thinking_effort"] = config.llm_thinking_effort
     if config.timezone:
         data["timezone"] = config.timezone
     data["personality"] = {

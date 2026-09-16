@@ -560,6 +560,7 @@ SPA_HTML = r"""<!DOCTYPE html>
           <div class="setting-group"><label class="setting-label">API key (optional)</label><input id="llm_api_key" type="password" class="setting-input" placeholder="(none)"></div>
           <div class="setting-group"><label class="setting-label">Timeout (s)</label><input id="llm_timeout" type="number" min="1" step="1" class="setting-input"></div>
         </div>
+        <div class="setting-group"><label class="setting-label">Thinking effort</label><select id="llm_thinking_effort" class="setting-input"><option value="">config file</option><option value="off">off (fastest)</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option></select></div>
         <div class="button-row"><button class="setting-button" data-save="brain">Save changes</button><div class="status-line" id="brain-status"></div></div>
       </div>
     </div>
@@ -960,6 +961,7 @@ const FIELDS = [
   {id:'llm_model', path:['llm_model'], t:'text', sec:'brain'},
   {id:'llm_api_key', path:['llm_api_key'], t:'text', sec:'brain', nullable:true},
   {id:'llm_timeout', path:['llm_timeout'], t:'num', sec:'brain', req:true, min:1},
+  {id:'llm_thinking_effort', path:['llm_thinking_effort'], t:'sel', sec:'brain'},
   {id:'personality.name', path:['personality','name'], t:'text', sec:'personality'},
   {id:'personality.humour', path:['personality','humour'], t:'dial', sec:'personality'},
   {id:'personality.honesty', path:['personality','honesty'], t:'dial', sec:'personality'},

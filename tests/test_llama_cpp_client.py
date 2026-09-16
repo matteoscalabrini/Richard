@@ -208,6 +208,19 @@ def test_stream_requests_prompt_cache():
     assert captured["cache_prompt"] is True
 
 
+def test_set_extra_body_reflected_in_next_request():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.update(json.loads(request.content))
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    brain = LlamaCppBrain("http://box:8080", "local", client=_client(handler))
+    brain.set_extra_body({"a": 1})
+    brain.complete([{"role": "user", "content": "hi"}])
+    assert captured["a"] == 1
+
+
 from richard.conversation import user_parts  # noqa: E402
 from richard.errors import BrainRejectedInput  # noqa: E402
 

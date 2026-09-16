@@ -16,6 +16,7 @@ import base64
 import binascii
 import io
 import json
+import logging
 import re
 import threading
 import wave
@@ -52,6 +53,8 @@ from richard.web.static import SPA_HTML
 
 _VOICE_NAME_RE = re.compile(r"[A-Za-z0-9_-]{1,32}")
 _MAX_VOICE_SAMPLE_BYTES = 8 * 1024 * 1024
+
+_LOG = logging.getLogger(__name__)
 
 BRAIN_DOWN_LINE = "I can't reach my brain right now."
 IMAGE_REJECTED_LINE = "I couldn't take that picture in."
@@ -105,6 +108,7 @@ def _config_to_dict(config: Config) -> dict:
         "llm_model": config.llm_model,
         "llm_api_key": config.llm_api_key,
         "llm_timeout": config.llm_timeout,
+        "llm_thinking_effort": config.llm_thinking_effort,
         "personality": {
             "name": config.personality.name,
             "humour": config.personality.humour,
@@ -351,6 +355,12 @@ def _apply_config_update(config: Config, patch: dict) -> list[str]:
     if "llm_timeout" in patch:
         config.llm_timeout = float(patch["llm_timeout"])
         changed.append("llm_timeout")
+    if "llm_thinking_effort" in patch:
+        value = str(patch["llm_thinking_effort"] or "")
+        if value not in ("", "off", "low", "medium", "high"):
+            raise ValueError(f"invalid llm_thinking_effort: {value!r}")
+        config.llm_thinking_effort = value
+        changed.append("llm_thinking_effort")
     p = patch.get("personality")
     if isinstance(p, dict):
         if "name" in p:
@@ -520,6 +530,7 @@ class WebApp:
         perception: Callable[[], object] | None = None,
         cue_can_prepare: Callable[[], bool] = lambda: True,
         tz_name: str | None = None,
+        apply_brain: Callable[[Config], None] | None = None,
     ) -> None:
         self._config_path = config_path
         self._memory = memory_store
@@ -536,6 +547,7 @@ class WebApp:
         self._plugin_records = plugin_records
         self._perception = perception  # getter: the service exists only when the plugin is enabled
         self._tz_name = tz_name
+        self._apply_brain = apply_brain
         self._cue_preparation = CuePreparation(
             Path(config_path).parent / "realtime-cues", can_prepare=cue_can_prepare,
         )
@@ -901,6 +913,11 @@ class WebApp:
             self._save(config, self._config_path)
             if cue_before != (cue_languages(config), cue_fingerprint(config, "en")):
                 self._cue_preparation.request(config)
+            if "llm_thinking_effort" in changed and self._apply_brain is not None:
+                try:
+                    self._apply_brain(self._load(self._config_path))
+                except Exception:
+                    _LOG.warning("apply_brain failed after config save", exc_info=True)
         return Response.json({"changed": changed, "config": _config_to_dict(config)})
 
     def _home_assistant_status(self) -> Response:

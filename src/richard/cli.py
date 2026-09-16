@@ -9,7 +9,14 @@ from typing import Callable
 
 from richard import __version__
 from richard.brain.llama_cpp import LlamaCppBrain
-from richard.config import apply_home_assistant_url, clamp_dial, default_plugins_dir, load_config, save_config
+from richard.config import (
+    apply_home_assistant_url,
+    clamp_dial,
+    default_plugins_dir,
+    load_config,
+    resolve_brain_role,
+    save_config,
+)
 from richard.conversation import Conversation
 from richard.engine import Engine
 from richard.memory import MemoryStore, default_memory_path
@@ -803,6 +810,9 @@ def _run_serve(write: Callable[[str], None] = print) -> int:
             perception=lambda: _perception_service_of(registry),
             cue_can_prepare=lambda: not session_registry.active(),
             tz_name=config.timezone or None,
+            apply_brain=lambda cfg: brain.set_extra_body(
+                resolve_brain_role(cfg, "conversational").extra_body
+            ),
         )
 
     def _control_engine():

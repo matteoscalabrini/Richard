@@ -332,6 +332,20 @@ def test_llm_extra_body_roundtrip_and_role_fallback(tmp_path):
     assert resolve_brain_role(loaded, "curator").extra_body == {"chat_template_kwargs": {"enable_thinking": False}}
 
 
+def test_thinking_effort_overrides_chat_template_kwargs(tmp_path):
+    from richard.config import load_config, save_config, thinking_kwargs, Config
+
+    assert thinking_kwargs("off") == {"enable_thinking": False}
+    assert thinking_kwargs("high") == {"enable_thinking": True, "reasoning_effort": "high"}
+    assert thinking_kwargs("") == {}
+    path = tmp_path / "config.toml"
+    cfg = Config(llm_thinking_effort="low", llm_extra_body={"chat_template_kwargs": {"enable_thinking": False, "keep": 1}})
+    save_config(cfg, path)
+    loaded = load_config(path)
+    assert loaded.llm_thinking_effort == "low"
+    assert loaded.llm_extra_body["chat_template_kwargs"] == {"keep": 1, "enable_thinking": True, "reasoning_effort": "low"}
+
+
 def test_plugins_table_round_trips_unknown_names(tmp_path):
     path = tmp_path / "config.toml"
     path.write_text(
