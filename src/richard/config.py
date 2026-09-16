@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import tomllib
 from dataclasses import dataclass, field
@@ -7,6 +8,8 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import tomli_w
+
+log = logging.getLogger("richard.config")
 
 
 def clamp_dial(value: object) -> int:
@@ -249,18 +252,22 @@ def _merge_thinking_kwargs(extra_body: dict, level: str) -> dict:
 
 def apply_thinking_effort(config: Config) -> None:
     """When config.llm_thinking_effort is off/low/medium/high, derive
-    chat_template_kwargs from it — both in llm_extra_body (the top-level fallback)
-    and in every [brains.<role>] that has its own extra_body (otherwise a role's
-    own chat_template_kwargs would silently shadow the UI setting, since
-    resolve_brain_role falls back on the whole extra_body dict per role, not
-    per key). Idempotent: safe to call again after a save/reload."""
+    chat_template_kwargs from it — in llm_extra_body (the top-level fallback) and in
+    [brains.conversational] specifically, since resolve_brain_role falls back on the
+    whole extra_body dict per role, not per key, so a role's own chat_template_kwargs
+    would otherwise silently shadow the UI setting.
+
+    Scoped to the conversational role only: a dedicated [brains.thinking] (or any other
+    named role) keeps its own reasoning_effort. The UI dial is "how hard should Richard's
+    everyday voice think", not a blanket override of every brain the config defines.
+    Idempotent: safe to call again after a save/reload."""
     level = config.llm_thinking_effort
     if level not in ("off", "low", "medium", "high"):
         return
     config.llm_extra_body = _merge_thinking_kwargs(config.llm_extra_body, level)
-    for role in config.brains.values():
-        if role.extra_body:
-            role.extra_body = _merge_thinking_kwargs(role.extra_body, level)
+    conversational = config.brains.get("conversational")
+    if conversational is not None and conversational.extra_body:
+        conversational.extra_body = _merge_thinking_kwargs(conversational.extra_body, level)
 
 
 _TRUTHY = {"1", "true", "yes", "on"}
@@ -362,13 +369,20 @@ def load_config(path: Path | None = None) -> Config:
         plugins.tables["home_assistant"] = settings.to_table()
         if settings.enabled and "home_assistant" not in plugins.enabled:
             plugins.enabled.append("home_assistant")
+    thinking_effort = data.get("llm_thinking_effort", Config.llm_thinking_effort) or Config.llm_thinking_effort
+    if thinking_effort not in ("", "off", "low", "medium", "high"):
+        log.warning(
+            "config: llm_thinking_effort %r is not one of off/low/medium/high; "
+            "leaving the config file's own chat_template_kwargs alone", thinking_effort,
+        )
+        thinking_effort = ""
     config = Config(
         llm_endpoint=data.get("llm_endpoint", Config.llm_endpoint),
         llm_model=data.get("llm_model", Config.llm_model),
         llm_api_key=data.get("llm_api_key", Config.llm_api_key),
         llm_timeout=float(data.get("llm_timeout", Config.llm_timeout)),
         llm_extra_body=dict(data.get("llm_extra_body") or {}),
-        llm_thinking_effort=data.get("llm_thinking_effort", Config.llm_thinking_effort) or Config.llm_thinking_effort,
+        llm_thinking_effort=thinking_effort,
         timezone=data.get("timezone", Config.timezone),
         personality=personality,
         voice=voice,

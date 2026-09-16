@@ -560,7 +560,7 @@ SPA_HTML = r"""<!DOCTYPE html>
           <div class="setting-group"><label class="setting-label">API key (optional)</label><input id="llm_api_key" type="password" class="setting-input" placeholder="(none)"></div>
           <div class="setting-group"><label class="setting-label">Timeout (s)</label><input id="llm_timeout" type="number" min="1" step="1" class="setting-input"></div>
         </div>
-        <div class="setting-group"><label class="setting-label">Thinking effort</label><select id="llm_thinking_effort" class="setting-input"><option value="">config file</option><option value="off">off (fastest)</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option></select></div>
+        <div class="setting-group"><label class="setting-label">Thinking effort</label><select id="llm_thinking_effort" class="setting-input"><option value="">leave as is</option><option value="off">off (fastest)</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option></select></div>
         <div class="button-row"><button class="setting-button" data-save="brain">Save changes</button><div class="status-line" id="brain-status"></div></div>
       </div>
     </div>

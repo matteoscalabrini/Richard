@@ -811,6 +811,10 @@ def _run_serve(write: Callable[[str], None] = print) -> int:
             perception=lambda: _perception_service_of(registry),
             cue_can_prepare=lambda: not session_registry.active(),
             tz_name=config.timezone or None,
+            # `brain` here is always the conversational role's brain (see _build_brain's
+            # default above); a running [brains.thinking] is a separate Brain instance
+            # this callback never touches, so the thinking-effort dial from the UI stays
+            # scoped to conversational by construction, matching apply_thinking_effort.
             apply_brain=lambda cfg: brain.set_extra_body(
                 resolve_brain_role(cfg, "conversational").extra_body
             ),

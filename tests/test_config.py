@@ -359,6 +359,40 @@ def test_thinking_effort_overrides_per_role_extra_body(tmp_path):
     }
 
 
+def test_thinking_effort_override_scoped_to_conversational_role_only(tmp_path):
+    """A dedicated [brains.thinking] with its own reasoning_effort must survive
+    apply_thinking_effort and a save/load round trip: the UI dial only ever tunes the
+    conversational role, never every brain the config happens to define."""
+    from richard.config import BrainRole, Config, apply_thinking_effort, load_config, resolve_brain_role, save_config
+
+    cfg = Config(llm_thinking_effort="low")
+    cfg.brains["thinking"] = BrainRole(
+        extra_body={"chat_template_kwargs": {"reasoning_effort": "high", "enable_thinking": True}}
+    )
+    apply_thinking_effort(cfg)
+    assert resolve_brain_role(cfg, "thinking").extra_body["chat_template_kwargs"] == {
+        "reasoning_effort": "high", "enable_thinking": True,
+    }
+
+    path = tmp_path / "config.toml"
+    save_config(cfg, path)
+    loaded = load_config(path)
+    assert resolve_brain_role(loaded, "thinking").extra_body["chat_template_kwargs"] == {
+        "reasoning_effort": "high", "enable_thinking": True,
+    }
+    # the conversational role (or the top-level fallback) still picks up the dial
+    assert loaded.llm_extra_body["chat_template_kwargs"]["reasoning_effort"] == "low"
+
+
+def test_load_config_warns_and_ignores_invalid_thinking_effort(tmp_path, caplog):
+    path = tmp_path / "config.toml"
+    path.write_text('llm_thinking_effort = "extreme"\n')
+    with caplog.at_level("WARNING", logger="richard.config"):
+        config = load_config(path)
+    assert config.llm_thinking_effort == ""
+    assert any("llm_thinking_effort" in record.getMessage() for record in caplog.records)
+
+
 def test_plugins_table_round_trips_unknown_names(tmp_path):
     path = tmp_path / "config.toml"
     path.write_text(
