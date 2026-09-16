@@ -33,6 +33,7 @@ class TurnTranscriber:
         self._languages = tuple(languages)
         self._model = _model
         self._lock = threading.Lock()
+        self._last_language: str | None = None
 
     def _ensure(self):
         if self._model is None:
@@ -43,11 +44,15 @@ class TurnTranscriber:
             )
         return self._model
 
-    def _resolve_language(self, model, audio) -> str | None:
+    def _detect_language(self, model, audio) -> str | None:
         """The language to force on transcribe(): the configured hint, or — when
         auto-detecting among a restricted set — the allowed language with the
         highest probability from detect_language(), falling back to the first
-        allowed language if detection is unavailable or errors out."""
+        allowed language if detection is unavailable or errors out.
+
+        Only called on a final pass (once per utterance) — detect_language is a
+        model call of its own and partials must stay cheap; they reuse whatever
+        the most recent final detected via self._last_language."""
         if self._language is not None or not self._languages:
             return self._language
         try:
@@ -58,13 +63,22 @@ class TurnTranscriber:
         allowed = [(code, probs.get(code, 0.0)) for code in self._languages]
         return max(allowed, key=lambda cp: cp[1])[0]
 
-    def _decode(self, pcm: bytes) -> Transcription:
+    def _partial_language(self) -> str | None:
+        if self._language is not None:
+            return self._language
+        if self._last_language is not None:
+            return self._last_language
+        if self._languages:
+            return self._languages[0]
+        return None
+
+    def _decode(self, pcm: bytes, *, detect: bool) -> Transcription:
         if not pcm:
             return Transcription("", None)
         audio = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
         with self._lock:
             model = self._ensure()
-            language = self._resolve_language(model, audio)
+            language = self._detect_language(model, audio) if detect else self._partial_language()
             segments, info = model.transcribe(
                 audio,
                 beam_size=1,
@@ -78,13 +92,15 @@ class TurnTranscriber:
                 and getattr(s, "avg_logprob", 0.0) >= -1.0
             ]
             language = getattr(info, "language", None) or language
+            if detect:
+                self._last_language = language
             return Transcription("".join(s.text for s in kept).strip(), language)
 
     def partial(self, pcm: bytes) -> str:
-        return self._decode(pcm).text
+        return self._decode(pcm, detect=False).text
 
     def final(self, pcm: bytes) -> str:
-        return self._decode(pcm).text
+        return self._decode(pcm, detect=True).text
 
     def final_with_language(self, pcm: bytes) -> Transcription:
-        return self._decode(pcm)
+        return self._decode(pcm, detect=True)

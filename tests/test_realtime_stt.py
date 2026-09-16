@@ -89,6 +89,35 @@ def test_hallucinated_segments_are_dropped():
     assert t.final(b"\x00" * 3200) == "come va"
 
 
+def test_partial_does_not_call_detect_language():
+    detect_calls = []
+    model = FakeModel([FakeSegment("ciao")])
+    model.detect_language = lambda audio: detect_calls.append(1) or ("it", 0.9, [("it", 0.9)])
+    t = TurnTranscriber("base", language=None, languages=("it", "en"), _model=model)
+    t.partial(b"\x00" * 3200)  # no language hint, no prior final — must not detect
+    assert detect_calls == []
+    assert model.calls[-1][1]["language"] == "it"  # falls back to languages[0]
+
+
+def test_final_detects_once_and_partial_reuses_it():
+    calls = []
+
+    def _detect(audio):
+        calls.append(1)
+        return ("en", 0.9, [("en", 0.9), ("it", 0.1)])
+
+    model = FakeModel([FakeSegment("hi")])
+    model.detect_language = _detect
+    t = TurnTranscriber("base", language=None, languages=("it", "en"), _model=model)
+    t.final(b"\x00" * 3200)
+    assert len(calls) == 1
+    assert model.calls[-1][1]["language"] == "en"
+
+    t.partial(b"\x00" * 3200)
+    assert len(calls) == 1  # partial reused self._last_language, no new detect call
+    assert model.calls[-1][1]["language"] == "en"
+
+
 def test_detect_language_failure_falls_back_to_first_allowed():
     model = FakeModel([FakeSegment("ciao")])
 
