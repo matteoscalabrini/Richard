@@ -20,6 +20,15 @@ class SmartTurn:
     def __init__(self, onnx_path, *, session=None, extractor=None) -> None:
         self._model_path = str(onnx_path)
         self._session = session
+        if extractor is None:
+            # Import (and thus fail fast if the optional `transformers` package
+            # is absent) at construction time, not on the first is_complete()
+            # call — cli.py's try/except around building this predictor relies
+            # on the ImportError surfacing here so it can fall back to plain
+            # silence endpointing and tell the operator why.
+            from transformers import WhisperFeatureExtractor
+
+            extractor = WhisperFeatureExtractor(chunk_length=8, feature_size=80)
         self._extractor = extractor
 
     def _ensure_session(self):
@@ -37,19 +46,11 @@ class SmartTurn:
             )
         return self._session
 
-    def _ensure_extractor(self):
-        if self._extractor is None:
-            from transformers import WhisperFeatureExtractor
-
-            self._extractor = WhisperFeatureExtractor(chunk_length=8, feature_size=80)
-        return self._extractor
-
     def is_complete(self, pcm16: bytes) -> float:
         audio = np.frombuffer(pcm16, dtype=np.int16).astype(np.float32) / 32768.0
         if audio.shape[0] > WINDOW_SAMPLES:
             audio = audio[-WINDOW_SAMPLES:]
-        extractor = self._ensure_extractor()
-        features = extractor(
+        features = self._extractor(
             audio,
             sampling_rate=SAMPLE_RATE,
             return_tensors="np",

@@ -170,7 +170,7 @@ class EndpointDetector:
                 and (self._trailing - self._min_silence_frames) % self._predictor_every_frames == 0
             ):
                 try:
-                    score = self._turn_predictor.is_complete(bytes(self._collected)[-256000:])
+                    score = self._turn_predictor.is_complete(bytes(self._collected[-256000:]))
                     if score >= self._threshold:
                         end = True
                 except Exception:

@@ -48,3 +48,23 @@ def test_is_complete_truncates_to_last_8_seconds():
     expected = samples[-128000:].astype(np.float32) / 32768.0
     assert audio_passed.shape == (128000,)
     np.testing.assert_allclose(audio_passed, expected)
+
+
+def test_construction_fails_fast_without_transformers(monkeypatch):
+    monkeypatch.setitem(__import__("sys").modules, "transformers", None)
+    session = FakeOrtSession([[0.5]])
+
+    with pytest.raises(ImportError):
+        SmartTurn("unused.onnx", session=session)
+
+
+def test_construction_skips_import_when_extractor_given(monkeypatch):
+    # extractor= is an explicit seam for tests/fakes: no transformers import
+    # should be attempted when it's supplied, even if the package is absent.
+    monkeypatch.setitem(__import__("sys").modules, "transformers", None)
+    session = FakeOrtSession([[0.5]])
+    extractor = FakeExtractor()
+
+    turn = SmartTurn("unused.onnx", session=session, extractor=extractor)
+
+    assert turn.is_complete(b"\x00\x01" * 16000) == 0.5

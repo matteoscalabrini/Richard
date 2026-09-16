@@ -314,6 +314,50 @@ def test_serve_realtime_guarded_swallows_bind_failure():
     assert lines and "Realtime API disabled" in lines[0]
 
 
+def test_build_turn_predictor_none_in_silence_mode():
+    from richard.cli import _build_turn_predictor
+    from richard.config import Config
+
+    config = Config()
+    config.voice.turn_detector = "silence"
+
+    predictor = _build_turn_predictor(
+        config, ensure_smart_turn=lambda **k: (_ for _ in ()).throw(AssertionError("should not be called")),
+        write=lambda *_: None,
+    )
+    assert predictor is None
+
+
+def test_build_turn_predictor_falls_back_to_none_on_failure():
+    from richard.cli import _build_turn_predictor
+    from richard.config import Config
+
+    config = Config()
+    config.voice.turn_detector = "smart"
+    lines = []
+
+    # ensure_smart_turn succeeds (returns a bogus path), but SmartTurn's own
+    # construction fails because transformers is unimportable here — this is
+    # the same failure mode a box without the optional `transformers` package
+    # hits, and it must surface as a graceful fallback, not a crash.
+    import sys
+
+    original = sys.modules.get("transformers", "unset")
+    sys.modules["transformers"] = None
+    try:
+        predictor = _build_turn_predictor(
+            config, ensure_smart_turn=lambda **k: "unused.onnx", write=lines.append,
+        )
+    finally:
+        if original == "unset":
+            sys.modules.pop("transformers", None)
+        else:
+            sys.modules["transformers"] = original
+
+    assert predictor is None
+    assert lines and "smart-turn unavailable" in lines[0]
+
+
 def test_realtime_session_factory_builds_wired_session():
     from richard.cli import _realtime_session_factory
     from richard.config import Config

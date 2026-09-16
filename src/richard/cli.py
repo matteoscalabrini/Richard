@@ -474,6 +474,26 @@ def _build_stt(config):
     return WhisperSTT(config.voice.stt_model)
 
 
+def _build_turn_predictor(config, *, ensure_smart_turn, write=print):
+    """Build the shared smart-turn predictor, or None to fall back to silence endpointing.
+
+    Any failure here (missing `transformers`, a bad download, ...) must not take
+    down the realtime server — it just means turns end on the silence ceiling
+    instead of ending early on a semantic cue. SmartTurn.__init__ imports
+    `transformers` eagerly so a missing optional dependency is caught right here,
+    not on the first utterance.
+    """
+    if config.voice.turn_detector != "smart":
+        return None
+    try:
+        from richard.realtime.turn import SmartTurn
+
+        return SmartTurn(ensure_smart_turn(write=write))
+    except Exception as exc:
+        write(f"smart-turn unavailable ({exc}); using silence endpointing")
+        return None
+
+
 def _realtime_session_factory(config, *, brain, providers_fn, synth, transcriber, vad_factory,
                               registry=None, perception=None, brains=None, turn_predictor=None):
     """Build the per-connection session factory for /v1/realtime.
@@ -868,14 +888,7 @@ def _run_serve(write: Callable[[str], None] = print) -> int:
             from richard.realtime.vad import SileroVAD, ensure_silero, ensure_smart_turn
 
             silero_path = ensure_silero(write=write)
-            predictor = None
-            if config.voice.turn_detector == "smart":
-                try:
-                    from richard.realtime.turn import SmartTurn
-
-                    predictor = SmartTurn(ensure_smart_turn(write=write))
-                except Exception as exc:
-                    write(f"smart-turn unavailable ({exc}); using silence endpointing")
+            predictor = _build_turn_predictor(config, ensure_smart_turn=ensure_smart_turn, write=write)
             transcriber = TurnTranscriber(
                 config.voice.stt_model,
                 language=None if config.voice.language == "auto" else config.voice.language,

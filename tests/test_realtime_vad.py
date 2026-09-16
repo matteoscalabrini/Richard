@@ -180,6 +180,35 @@ def test_no_turn_predictor_uses_silence_ms_as_today():
     assert [e[0] for e in events] == ["speech_started", "utterance"]
 
 
+class ExplodingPredictor:
+    def __init__(self):
+        self.calls = 0
+
+    def is_complete(self, pcm):
+        self.calls += 1
+        raise RuntimeError("onnx session died")
+
+
+def test_turn_predictor_exception_falls_back_to_ceiling_and_warns_once(caplog):
+    predictor = ExplodingPredictor()
+    d = _detector(
+        [True] + [False] * 10,
+        turn_predictor=predictor,
+        min_silence_ms=64,
+        max_silence_ms=320,
+        predictor_every_ms=64,
+    )
+    with caplog.at_level("WARNING", logger="richard.realtime.vad"):
+        events = [e for i in range(11) for e in d.feed(bytes([i]) * 1024)]
+
+    assert [e[0] for e in events] == ["speech_started", "utterance"]
+    assert not d.in_speech
+    assert predictor.calls == 5  # trailing frames 2,4,6,8,10 all raise
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert len(warnings) == 1  # warned once despite 5 failures
+    assert "turn_predictor.is_complete failed" in warnings[0].message
+
+
 def test_ensure_smart_turn_skips_download_when_present(tmp_path):
     target = tmp_path / "smart-turn-v3.2-cpu.onnx"
     target.write_bytes(b"x" * 2048)  # > 1 KiB guard, mirrors _present
