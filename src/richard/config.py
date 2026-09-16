@@ -234,6 +234,35 @@ def resolve_brain_role(config: Config, role: str) -> BrainRole:
     )
 
 
+def _merge_thinking_kwargs(extra_body: dict, level: str) -> dict:
+    """extra_body with chat_template_kwargs overridden by thinking_kwargs(level),
+    merged over whatever chat_template_kwargs it already had (dropping a stale
+    reasoning_effort when level == "off")."""
+    existing = extra_body.get("chat_template_kwargs")
+    existing = dict(existing) if isinstance(existing, dict) else {}
+    if level == "off":
+        existing.pop("reasoning_effort", None)
+    extra_body = dict(extra_body)
+    extra_body["chat_template_kwargs"] = {**existing, **thinking_kwargs(level)}
+    return extra_body
+
+
+def apply_thinking_effort(config: Config) -> None:
+    """When config.llm_thinking_effort is off/low/medium/high, derive
+    chat_template_kwargs from it — both in llm_extra_body (the top-level fallback)
+    and in every [brains.<role>] that has its own extra_body (otherwise a role's
+    own chat_template_kwargs would silently shadow the UI setting, since
+    resolve_brain_role falls back on the whole extra_body dict per role, not
+    per key). Idempotent: safe to call again after a save/reload."""
+    level = config.llm_thinking_effort
+    if level not in ("off", "low", "medium", "high"):
+        return
+    config.llm_extra_body = _merge_thinking_kwargs(config.llm_extra_body, level)
+    for role in config.brains.values():
+        if role.extra_body:
+            role.extra_body = _merge_thinking_kwargs(role.extra_body, level)
+
+
 _TRUTHY = {"1", "true", "yes", "on"}
 
 
@@ -349,15 +378,7 @@ def load_config(path: Path | None = None) -> Config:
         brains=brains,
         plugins=plugins,
     )
-    if config.llm_thinking_effort in ("off", "low", "medium", "high"):
-        existing = config.llm_extra_body.get("chat_template_kwargs")
-        existing = dict(existing) if isinstance(existing, dict) else {}
-        if config.llm_thinking_effort == "off":
-            existing.pop("reasoning_effort", None)
-        config.llm_extra_body["chat_template_kwargs"] = {
-            **existing,
-            **thinking_kwargs(config.llm_thinking_effort),
-        }
+    apply_thinking_effort(config)
     # Environment overrides take precedence over the file.
     config.llm_endpoint = os.environ.get("RICHARD_LLM_ENDPOINT", config.llm_endpoint)
     config.llm_model = os.environ.get("RICHARD_LLM_MODEL", config.llm_model)

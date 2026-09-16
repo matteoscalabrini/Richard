@@ -346,6 +346,19 @@ def test_thinking_effort_overrides_chat_template_kwargs(tmp_path):
     assert loaded.llm_extra_body["chat_template_kwargs"] == {"keep": 1, "enable_thinking": True, "reasoning_effort": "low"}
 
 
+def test_thinking_effort_overrides_per_role_extra_body(tmp_path):
+    from richard.config import BrainRole, Config, resolve_brain_role, apply_thinking_effort
+
+    cfg = Config(llm_thinking_effort="off")
+    cfg.brains["conversational"] = BrainRole(
+        extra_body={"chat_template_kwargs": {"enable_thinking": True, "reasoning_effort": "high"}}
+    )
+    apply_thinking_effort(cfg)
+    assert resolve_brain_role(cfg, "conversational").extra_body["chat_template_kwargs"] == {
+        "enable_thinking": False
+    }
+
+
 def test_plugins_table_round_trips_unknown_names(tmp_path):
     path = tmp_path / "config.toml"
     path.write_text(

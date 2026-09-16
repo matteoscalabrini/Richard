@@ -33,6 +33,7 @@ from richard.clock import local_now, now_line
 from richard.config import (
     Config,
     apply_home_assistant_url,
+    apply_thinking_effort,
     clamp_dial,
     load_config,
     save_config,
@@ -360,6 +361,7 @@ def _apply_config_update(config: Config, patch: dict) -> list[str]:
         if value not in ("", "off", "low", "medium", "high"):
             raise ValueError(f"invalid llm_thinking_effort: {value!r}")
         config.llm_thinking_effort = value
+        apply_thinking_effort(config)
         changed.append("llm_thinking_effort")
     p = patch.get("personality")
     if isinstance(p, dict):

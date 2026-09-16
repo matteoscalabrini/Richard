@@ -278,6 +278,23 @@ def test_put_config_thinking_effort_applies_to_running_brain(tmp_path):
     assert applied[0].llm_extra_body["chat_template_kwargs"]["reasoning_effort"] == "medium"
 
 
+def test_put_config_thinking_effort_persists_chat_template_kwargs_on_disk(tmp_path):
+    import tomllib
+
+    app = _app(tmp_path)
+    resp = app.handle(
+        "PUT", "/api/config", json.dumps({"llm_thinking_effort": "medium"}).encode()
+    )
+    assert resp.status == 200
+    with open(app._config_path, "rb") as f:
+        on_disk = tomllib.load(f)
+    assert on_disk["llm_thinking_effort"] == "medium"
+    assert on_disk["llm_extra_body"]["chat_template_kwargs"] == {
+        "enable_thinking": True,
+        "reasoning_effort": "medium",
+    }
+
+
 def test_put_config_thinking_effort_rejects_invalid_value(tmp_path):
     app = _app(tmp_path)
     resp = app.handle(
