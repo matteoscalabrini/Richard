@@ -473,7 +473,7 @@ def _build_stt(config):
 
 
 def _realtime_session_factory(config, *, brain, providers_fn, synth, transcriber, vad_factory,
-                              registry=None, perception=None):
+                              registry=None, perception=None, brains=None):
     """Build the per-connection session factory for /v1/realtime.
 
     One transcriber and one TTS engine are shared across sessions (models load
@@ -495,7 +495,7 @@ def _realtime_session_factory(config, *, brain, providers_fn, synth, transcriber
                 provider = provider.clone()
                 camera_providers.append(provider)
             providers.append(provider)
-        engine = Engine(brain, providers, config.personality)
+        engine = Engine(brain, providers, config.personality, brains=brains)
 
         def bind_source(source_id):
             for provider in camera_providers:
@@ -727,6 +727,7 @@ def _run_serve(write: Callable[[str], None] = print) -> int:
     from richard.satellite.relays import RelayRegistry
 
     brain = _build_brain(config)
+    brains = {"thinking": _build_brain(config, "thinking")} if "thinking" in config.brains else None
     stt = _build_stt(config)
     synth = _build_tts(config, write)
     memory_store = MemoryStore(default_memory_path())
@@ -786,7 +787,7 @@ def _run_serve(write: Callable[[str], None] = print) -> int:
 
         def _chat_engine():
             # Same engine the voice path uses: persona + live device control + memory.
-            return Engine(brain, _serve_providers(), config.personality)
+            return Engine(brain, _serve_providers(), config.personality, brains=brains)
 
         # Browser voice turn: STT (remote only) → engine → TTS. Needs the remote Whisper
         # server (it decodes the browser's webm); skipped for the local STT engine.
@@ -816,7 +817,7 @@ def _run_serve(write: Callable[[str], None] = print) -> int:
         )
 
     def _control_engine():
-        return Engine(brain, _serve_providers(), config.personality)
+        return Engine(brain, _serve_providers(), config.personality, brains=brains)
 
     monitor = _start_control_loop_monitor(
         control_store,
@@ -858,7 +859,7 @@ def _run_serve(write: Callable[[str], None] = print) -> int:
             factory = _realtime_session_factory(
                 config, brain=brain, providers_fn=_serve_providers, synth=synth,
                 transcriber=transcriber, vad_factory=lambda: SileroVAD(silero_path),
-                registry=session_registry, perception=perception_service,
+                registry=session_registry, perception=perception_service, brains=brains,
             )
             realtime_coro = _serve_realtime_guarded(
                 serve_realtime(

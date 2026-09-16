@@ -499,3 +499,33 @@ def test_conditional_tools_ignore_perception_context_lines():
     convo.add_user("[perception] 10:02 matteo recognised (browser)")
     assert "".join(engine.respond_streaming(convo)) == "It's noon."
     assert [t["function"]["name"] for t in brain.tools[0]] == ["who_is_here"]
+
+
+def test_knowledge_question_streams_from_thinking_brain_when_configured():
+    thinking_brain = FakeBrain([{"deltas": ["Sondheim wrote it in 1970."]}])
+    default_brain = FakeBrain([])
+    provider = FakeProvider()
+    engine = Engine(
+        default_brain, [provider], Personality(), brains={"thinking": thinking_brain}
+    )
+    convo = Conversation()
+    convo.add_user("who wrote Merrily We Roll Along and when did it open")
+    out = "".join(engine.respond_streaming(convo))
+    assert out == "Sondheim wrote it in 1970."
+    assert len(thinking_brain.calls) == 1
+    assert default_brain.calls == []
+
+
+def test_household_request_streams_from_default_brain_when_thinking_configured():
+    thinking_brain = FakeBrain([])
+    default_brain = FakeBrain([{"deltas": ["Fan's ", "off."]}])
+    provider = FakeProvider()
+    engine = Engine(
+        default_brain, [provider], Personality(), brains={"thinking": thinking_brain}
+    )
+    convo = Conversation()
+    convo.add_user("turn the kitchen fan off please now")
+    out = "".join(engine.respond_streaming(convo))
+    assert out == "Fan's off."
+    assert len(default_brain.calls) == 1
+    assert thinking_brain.calls == []

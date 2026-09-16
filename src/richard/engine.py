@@ -11,6 +11,7 @@ from richard.config import Personality
 from richard.conversation import Conversation, user_parts
 from richard.persona import build_system_prompt
 from richard.providers.base import Provider, ToolResult
+from richard.routing import role_for
 
 # Small local models often narrate an action ("I'll turn it off.") and end the turn
 # without calling a tool, forcing the user to say "do it" just to grant another
@@ -127,11 +128,18 @@ class Engine:
         providers: list[Provider],
         personality: Personality,
         max_rounds: int = 5,
+        brains: dict[str, Brain] | None = None,
     ) -> None:
         self._brain = brain
         self._providers = providers
         self._personality = personality
         self._max_rounds = max_rounds
+        self._brains = dict(brains or {})
+
+    def _brain_for(self, conversation: Conversation) -> Brain:
+        """The thinking brain for knowledge questions when one is configured,
+        otherwise the default brain — unchanged behaviour with no `brains` map."""
+        return self._brains.get(role_for(_latest_user_text(conversation)), self._brain)
 
     def _system_prompt(self) -> str:
         sections = [build_system_prompt(self._personality)]
@@ -246,11 +254,12 @@ class Engine:
         working += [m.to_chat() for m in conversation.history()]
         user_text = _latest_user_text(conversation)
         schemas = [s for provider in self._providers for s in _served_schemas(provider, user_text)]
+        brain = self._brain_for(conversation)
         last_content = ""
         any_tool_call = False
         nudged = False
         for _ in range(self._max_rounds):
-            completion = self._brain.complete(working, schemas)
+            completion = brain.complete(working, schemas)
             if completion.content:
                 last_content = completion.content
             if not completion.tool_calls:
@@ -289,6 +298,7 @@ class Engine:
         schemas = [
             s for provider in self._providers for s in _served_schemas(provider, user_text)
         ] + client_schemas
+        brain = self._brain_for(conversation)
         any_tool_call = False
         nudged = False
         hold = False  # buffer the nudge round so a sentinel reply is never spoken
@@ -304,7 +314,7 @@ class Engine:
                 next_phase = "thinking"
                 spoken = ""
                 tool_calls = []
-                for event in self._brain.stream(working, schemas):
+                for event in brain.stream(working, schemas):
                     if event.delta:
                         spoken += event.delta
                         if not hold:
