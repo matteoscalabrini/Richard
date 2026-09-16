@@ -5,7 +5,7 @@ from richard.routing import role_for
 
 @pytest.mark.parametrize("text", [
     "who wrote Merrily We Roll Along and when did it open",
-    "why does the sky look red at sunset here in Italy",
+    "why is the sky red at sunset here in Italy",
     "spiegami come funziona una pompa di calore",
     "quale musical ha scritto Sondheim nel 1970",
 ])
@@ -20,6 +20,10 @@ def test_knowledge_questions_go_to_thinking(text):
     "what am I holding",
     "how are you",
     "quando hai visto Anna l'ultima volta",
+    "look at this and tell me what it is",
+    "can you look at this and explain what it does",
+    "what do you see on my desk",
+    "guarda qui e dimmi cosa vedi",
     None, "",
 ])
 def test_everything_else_stays_conversational(text):

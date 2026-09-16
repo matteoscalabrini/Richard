@@ -16,11 +16,14 @@ _WH_RE = re.compile(
 
 # Household/vision/tool words: their presence means the turn is a device or
 # perception request, not a knowledge question, even if it happens to contain a
-# wh-word ("why does the sky look red" is knowledge; "quando hai visto Anna
-# l'ultima volta" is a personal/vision question about *this* room, not trivia).
+# wh-word ("look at this and tell me what it is" is a camera request; "quando hai
+# visto Anna l'ultima volta" is a personal/vision question about *this* room, not
+# trivia). `look`/`see` and their common inflections are included: a bare "look" or
+# "see" is what a camera request actually says ("what do you see", "look at this").
 _HOUSEHOLD_RE = re.compile(
     r"(?i)\b(?:light|lamp|luce|lampada|lampade|faretti|switch|accendi|spegni|"
-    r"temperature|temperatura|camera|guarda|vedi|visto|foto|remember|ricorda|"
+    r"temperature|temperatura|camera|look(?:s|ing)?|see(?:s|ing)?|seen|"
+    r"guarda|vedi|visto|foto|remember|ricorda|"
     r"forget|time|ore|weather|meteo|search|cerca)\b"
 )
 
