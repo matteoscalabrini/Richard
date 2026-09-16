@@ -94,7 +94,7 @@ def test_tools_to_schemas_converts_flat_specs_and_drops_reserved():
     ]
     schemas, dropped = events.tools_to_schemas(tools, reserved={"remember"})
     assert schemas == [{"type": "function", "function": {
-        "name": "camera", "description": "look", "parameters": {"type": "object", "properties": {}}}}]
+        "name": "camera", "description": events.CLIENT_CAMERA_DESCRIPTION, "parameters": {"type": "object", "properties": {}}}}]
     assert dropped == ["remember"]
 
 
@@ -115,3 +115,20 @@ def test_function_call_arguments_done_shape():
 
 def test_active_response_code():
     assert events.ACTIVE_RESPONSE_CODE == "conversation_already_has_active_response"
+
+
+def test_client_camera_tool_gets_richards_description_but_keeps_its_parameters():
+    stock = {
+        "type": "function", "name": "camera",
+        "description": "If the user asks you to look without saying at what, call this tool and describe what you see.",
+        "parameters": {"type": "object", "properties": {"question": {"type": "string"}}, "required": ["question"]},
+    }
+    schemas, dropped = events.tools_to_schemas([stock], reserved=set())
+    fn = schemas[0]["function"]
+    assert fn["description"] == events.CLIENT_CAMERA_DESCRIPTION
+    assert "describe what you see" not in fn["description"]
+    assert fn["parameters"] == stock["parameters"]
+    assert dropped == []
+    # other client tools are passed through verbatim
+    (other,), _ = events.tools_to_schemas([{"name": "move_head", "description": "Move the head."}], reserved=set())
+    assert other["function"]["description"] == "Move the head."

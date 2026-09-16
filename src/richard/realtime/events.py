@@ -29,6 +29,17 @@ CLIENT_EVENT_TYPES = {
 
 ACTIVE_RESPONSE_CODE = "conversation_already_has_active_response"
 
+# A client-owned camera (the Reachy app, the browser) is served with Richard's own
+# description, whatever the client wrote. The stock Reachy text ends with "call this
+# tool and describe what you see", which contradicts the perception rule and pushes
+# the model into scene narration (review 2026-09-16). Parameters stay the client's.
+CLIENT_CAMERA_DESCRIPTION = (
+    "Take a picture with the camera to answer a visual question or investigate something you "
+    "noticed. Use the image as evidence for your response or next action. A request to look is "
+    "not a request to describe the scene; describe it only when asked for a description. Answer "
+    "specific visual questions directly. Each call captures the current moment."
+)
+
 
 def new_id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex[:12]}"
@@ -155,7 +166,10 @@ def tools_to_schemas(tools, reserved=()) -> tuple[list[dict], list[str]]:
             parameters = {"type": "object", "properties": {}}
         schemas.append({"type": "function", "function": {
             "name": name,
-            "description": str(tool.get("description") or ""),
+            "description": (
+                CLIENT_CAMERA_DESCRIPTION if name == "camera"
+                else str(tool.get("description") or "")
+            ),
             "parameters": parameters,
         }})
     return schemas, dropped
