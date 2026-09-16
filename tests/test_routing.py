@@ -28,3 +28,20 @@ def test_knowledge_questions_go_to_thinking(text):
 ])
 def test_everything_else_stays_conversational(text):
     assert role_for(text) == "conversational"
+
+
+@pytest.mark.parametrize("text", [
+    "come stai oggi, tutto bene?",
+    "how was your day today then",
+    "what do you think about that idea",
+    "cosa ne pensi di questo piano",
+    "who is in the room right now",
+    "what colour is the mug I am holding",
+    "how many people are in the frame",
+    "how do I turn on the kitchen lights",
+    "what did I tell you yesterday about tea",
+    "[AUTOMATED CHECK] is anything on fire",
+    "[SCHEDULED] time to remind matteo about the meeting",
+])
+def test_ordinary_chat_vision_and_automated_prompts_stay_conversational(text):
+    assert role_for(text) == "conversational"
