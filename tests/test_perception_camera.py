@@ -73,7 +73,7 @@ def test_camera_execute_reports_no_frame_and_bad_region_as_text():
 
 def test_presence_tools():
     p = PresenceProvider(FakeService())
-    assert [s["function"]["name"] for s in p.schemas()] == ["who_is_here", "last_seen", "enrol_face", "forget_face"]
+    assert [s["function"]["name"] for s in p.schemas()] == ["who_is_here"]
     assert p.execute("who_is_here", {}) == "Present now: matteo (browser)."
     assert "matteo" in p.execute("last_seen", {"name": "matteo"}) and "2026-09-09" in p.execute("last_seen", {"name": "matteo"})
     assert "never" in p.execute("last_seen", {"name": "ghost"}).lower()
@@ -100,9 +100,9 @@ def test_enrol_and_forget_face_tools():
 
     svc = Svc()
     p = PresenceProvider(svc)
-    names = [s["function"]["name"] for s in p.schemas()]
+    names = [s["function"]["name"] for s in p.all_schemas()]
     assert names == ["who_is_here", "last_seen", "enrol_face", "forget_face"]
-    assert "told you their name" in next(s for s in p.schemas() if s["function"]["name"] == "enrol_face")["function"]["description"]
+    assert "told you their name" in next(s for s in p.all_schemas() if s["function"]["name"] == "enrol_face")["function"]["description"]
     assert p.execute("enrol_face", {"name": "Matteo"}) == "Enrolled Matteo from 3 snapshots; I will recognise them from now on."
     assert "exactly one face" in p.execute("enrol_face", {"name": "ghost"})
     assert p.execute("enrol_face", {"name": ""}) == "A name is required to enrol someone."
@@ -110,3 +110,17 @@ def test_enrol_and_forget_face_tools():
     assert "not enrolled" in p.execute("forget_face", {"name": "nobody"})
     svc.settings.identity_enabled = False
     assert "recognition is off" in p.execute("enrol_face", {"name": "Anna"}).lower()
+
+
+def test_presence_provider_serves_face_tools_only_when_faces_are_the_topic():
+    provider = PresenceProvider(FakeService())
+    assert [s["function"]["name"] for s in provider.schemas()] == ["who_is_here"]
+    assert [s["function"]["name"] for s in provider.all_schemas()] == [
+        "who_is_here", "last_seen", "enrol_face", "forget_face",
+    ]
+    assert provider.conditional_schemas("what time is it") == []
+    assert provider.conditional_schemas(None) == []
+    for text in ("remember my face, I'm Matteo", "forget Anna's face", "when did you last see Luca",
+                 "ricordati la mia faccia", "quando hai visto Anna l'ultima volta", "riconoscimi"):
+        names = [s["function"]["name"] for s in provider.conditional_schemas(text)]
+        assert names == ["last_seen", "enrol_face", "forget_face"], text

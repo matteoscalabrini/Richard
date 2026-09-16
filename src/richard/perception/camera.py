@@ -4,6 +4,7 @@ so a connected Reachy app's client-side `camera` (spec 3a) is used instead."""
 from __future__ import annotations
 
 import json
+import re
 import threading
 
 from richard.perception import image
@@ -52,6 +53,14 @@ FORGET_SCHEMA = {"type": "function", "function": {
     "name": "forget_face",
     "description": "Stop recognising a person: delete their enrolled face for good (when asked to forget them).",
     "parameters": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}}}
+
+# Face and recognition talk, English and Italian: only then are the face tools offered.
+# Serving them on every turn made five of the tool list camera-shaped (review 2026-09-16).
+_FACE_TOPIC_RE = re.compile(
+    r"(?i)\b(?:face|faces|recogni[sz]e|recogni[sz]ed|enrol|enroll|last (?:saw|seen|see)|"
+    r"last time you saw|faccia|viso|riconosc\w*|ricordati (?:di|la) me|"
+    r"l'ultima volta|ultima volta)\b"
+)
 
 
 class CameraProvider:
@@ -103,7 +112,15 @@ class PresenceProvider:
         self._service = service
 
     def schemas(self) -> list[dict]:
+        return [WHO_SCHEMA]
+
+    def all_schemas(self) -> list[dict]:
         return [WHO_SCHEMA, LAST_SEEN_SCHEMA, ENROL_SCHEMA, FORGET_SCHEMA]
+
+    def conditional_schemas(self, user_text: str | None) -> list[dict]:
+        if user_text and _FACE_TOPIC_RE.search(user_text):
+            return [LAST_SEEN_SCHEMA, ENROL_SCHEMA, FORGET_SCHEMA]
+        return []
 
     def execute(self, name: str, arguments: dict) -> str:
         if name == "enrol_face":

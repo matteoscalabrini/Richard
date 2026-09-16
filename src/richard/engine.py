@@ -53,6 +53,28 @@ def _has_image(content) -> bool:
     )
 
 
+def _all_schemas(provider) -> list[dict]:
+    """Every schema a provider can ever serve (execution and name reservation)."""
+    getter = getattr(provider, "all_schemas", None)
+    return getter() if callable(getter) else provider.schemas()
+
+
+def _served_schemas(provider, user_text: str | None) -> list[dict]:
+    """The schemas served on this turn: the always-on ones plus the on-topic extras."""
+    extra = getattr(provider, "conditional_schemas", None)
+    return provider.schemas() + (extra(user_text) if callable(extra) else [])
+
+
+def _latest_user_text(conversation: Conversation) -> str | None:
+    for message in reversed(conversation.history()):
+        if message.role == "user":
+            text = message.text()
+            if text:
+                return text
+            continue
+    return None
+
+
 @dataclass(frozen=True)
 class ClientToolCall:
     """A tool call the engine cannot execute: it belongs to the connected client (the
@@ -127,7 +149,7 @@ class Engine:
 
     def tool_names(self) -> list[str]:
         """Names of the tools Richard's providers own (client tools with these names are dropped)."""
-        return [s["function"]["name"] for provider in self._providers for s in provider.schemas()]
+        return [s["function"]["name"] for provider in self._providers for s in _all_schemas(provider)]
 
     def _client_schemas(self, client_tools: list[dict] | None) -> list[dict]:
         owned = set(self.tool_names())
@@ -135,7 +157,7 @@ class Engine:
 
     def _execute(self, name: str, arguments: dict) -> str | ToolResult:
         for provider in self._providers:
-            if any(s["function"]["name"] == name for s in provider.schemas()):
+            if any(s["function"]["name"] == name for s in _all_schemas(provider)):
                 try:
                     return provider.execute(name, arguments)
                 except Exception as exc:
@@ -204,7 +226,8 @@ class Engine:
     def respond(self, conversation: Conversation) -> str:
         working: list[dict] = [{"role": "system", "content": self._head(conversation)}]
         working += [m.to_chat() for m in conversation.history()]
-        schemas = [s for provider in self._providers for s in provider.schemas()]
+        user_text = _latest_user_text(conversation)
+        schemas = [s for provider in self._providers for s in _served_schemas(provider, user_text)]
         last_content = ""
         any_tool_call = False
         nudged = False
@@ -244,7 +267,10 @@ class Engine:
         working += [m.to_chat() for m in conversation.request_history()]
         client_schemas = self._client_schemas(client_tools)
         client_names = {s["function"]["name"] for s in client_schemas}
-        schemas = [s for provider in self._providers for s in provider.schemas()] + client_schemas
+        user_text = _latest_user_text(conversation)
+        schemas = [
+            s for provider in self._providers for s in _served_schemas(provider, user_text)
+        ] + client_schemas
         any_tool_call = False
         nudged = False
         hold = False  # buffer the nudge round so a sentinel reply is never spoken

@@ -417,3 +417,58 @@ def test_tool_result_with_images_becomes_tool_message_then_user_image_message():
     # the streaming engine leaves the final reply to its caller (the session persists it)
     assert [m.role for m in convo.history()] == ["user", "assistant", "tool", "user"]
     assert convo.pending_client_calls() == []
+
+
+class FaceProvider:
+    def __init__(self):
+        self.executed = []
+
+    def schemas(self):
+        return [{"type": "function", "function": {"name": "who_is_here", "parameters": {}}}]
+
+    def all_schemas(self):
+        return self.schemas() + [{"type": "function", "function": {"name": "enrol_face", "parameters": {}}}]
+
+    def conditional_schemas(self, user_text):
+        return self.all_schemas()[1:] if user_text and "face" in user_text else []
+
+    def execute(self, name, arguments):
+        self.executed.append(name)
+        return "ok"
+
+    def context(self):
+        return None
+
+
+def test_conditional_tools_are_served_on_topic_and_still_executable():
+    provider = FaceProvider()
+    brain = FakeBrain([
+        {"deltas": ["Nobody new."]},
+        {"tool_calls": [ToolCall(id="1", name="enrol_face", arguments={"name": "Matteo"})]},
+        {"deltas": ["Done."]},
+    ])
+    engine = Engine(brain, [provider], Personality())
+    convo = Conversation()
+    convo.add_user("what time is it")
+    assert "".join(engine.respond_streaming(convo)) == "Nobody new."
+    assert [t["function"]["name"] for t in brain.tools[0]] == ["who_is_here"]
+    convo.add_assistant("Nobody new.")
+    convo.add_user("remember my face")
+    assert "".join(engine.respond_streaming(convo)) == "Done."
+    assert [t["function"]["name"] for t in brain.tools[1]] == ["who_is_here", "enrol_face"]
+    assert provider.executed == ["enrol_face"]
+    assert "enrol_face" in engine.tool_names()
+
+
+def test_conditional_tools_still_served_when_last_user_message_is_image_only():
+    # An image-only user turn (a picture with no accompanying text, e.g. one posted by
+    # the client after a camera call) must not blank out the on-topic face tools: the
+    # engine walks back to the last user message that has text.
+    provider = FaceProvider()
+    brain = FakeBrain([{"deltas": ["Enrolled."]}])
+    engine = Engine(brain, [provider], Personality())
+    convo = Conversation()
+    convo.add_user("remember my face")
+    convo.add_user([{"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,AAAA"}}])
+    assert "".join(engine.respond_streaming(convo)) == "Enrolled."
+    assert [t["function"]["name"] for t in brain.tools[0]] == ["who_is_here", "enrol_face"]
