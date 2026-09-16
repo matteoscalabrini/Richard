@@ -102,6 +102,46 @@ def test_call_service_posts_json_and_returns_changed_states():
     assert changed[0].state == "on"
 
 
+def test_call_service_with_response_posts_and_returns_dict():
+    def handler(request):
+        assert request.url.path == "/api/services/weather/get_forecasts"
+        assert request.url.query == b"return_response="
+        assert json.loads(request.content) == {
+            "entity_id": "weather.home",
+            "type": "daily",
+        }
+        return httpx.Response(
+            200,
+            json={
+                "changed_states": [],
+                "service_response": {
+                    "weather.home": {
+                        "forecast": [
+                            {
+                                "datetime": "2026-09-17T00:00:00+00:00",
+                                "condition": "partlycloudy",
+                                "temperature": 26,
+                                "templow": 15,
+                                "precipitation_probability": 20,
+                            }
+                        ]
+                    }
+                },
+            },
+        )
+
+    payload = _client(handler).call_service_with_response(
+        "weather", "get_forecasts", {"entity_id": "weather.home", "type": "daily"}
+    )
+    assert payload["service_response"]["weather.home"]["forecast"][0]["condition"] == "partlycloudy"
+
+
+def test_call_service_with_response_rejects_non_dict_payload():
+    client = _client(lambda request: httpx.Response(200, json=[]))
+    with pytest.raises(HomeAssistantError, match="invalid service response"):
+        client.call_service_with_response("weather", "get_forecasts", {"entity_id": "weather.home"})
+
+
 def test_unauthorized_response_has_useful_error():
     client = _client(lambda request: httpx.Response(401, request=request))
     with pytest.raises(HomeAssistantError, match="rejected the access token"):

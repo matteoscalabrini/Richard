@@ -36,6 +36,7 @@ class FakeClient:
         # modelling Home Assistant's asynchronous transitions.
         self.settle_reads = 0
         self._stale = None
+        self.forecast_response: dict | None = None
 
     def _index(self, entity_id):
         for index, entity in enumerate(self.entities):
@@ -83,6 +84,12 @@ class FakeClient:
             self._apply(entity_id, None, {"temperature": data["temperature"]})
         return []
 
+    def call_service_with_response(self, domain, service, data):
+        self.calls.append(("call_service_with_response", domain, service, data))
+        if self.forecast_response is not None:
+            return self.forecast_response
+        return {"changed_states": [], "service_response": {}}
+
 
 def _provider(client=None, **kwargs):
     """A provider whose polling never spends real time."""
@@ -108,6 +115,7 @@ def test_schemas_expose_discovery_state_and_control_tools():
         "list_home_assistant_entities",
         "get_home_assistant_state",
         "call_home_assistant_service",
+        "forecast",
     ]
 
 
@@ -394,3 +402,138 @@ def test_client_error_becomes_tool_result():
         "list_home_assistant_entities", {}
     )
     assert result == "Home Assistant is unreachable"
+
+
+# --- forecast ---
+
+
+def _weather_client():
+    client = FakeClient()
+    client.entities.append(
+        HomeAssistantEntity(
+            "weather.home",
+            "partlycloudy",
+            {"friendly_name": "Home", "temperature": 21.4, "humidity": 60, "wind_speed": 12},
+        )
+    )
+    return client
+
+
+def test_forecast_daily_defaults_to_one_day():
+    client = _weather_client()
+    client.forecast_response = {
+        "changed_states": [],
+        "service_response": {
+            "weather.home": {
+                "forecast": [
+                    {
+                        "datetime": "2026-09-17T00:00:00+00:00",
+                        "condition": "partlycloudy",
+                        "temperature": 26,
+                        "templow": 15,
+                        "precipitation_probability": 20,
+                    }
+                ]
+            }
+        },
+    }
+    result = _provider(client).execute("forecast", {"days": 1})
+    assert result == (
+        "weather.home now: partlycloudy, 21.4°C, humidity 60%, wind 12 km/h; "
+        "Thu 2026-09-17: partlycloudy 26°/15°, rain 20%"
+    )
+    assert client.calls[-1] == (
+        "call_service_with_response",
+        "weather",
+        "get_forecasts",
+        {"entity_id": "weather.home", "type": "daily"},
+    )
+
+
+def test_forecast_hourly_formats_time_and_single_temperature():
+    client = _weather_client()
+    client.forecast_response = {
+        "service_response": {
+            "weather.home": {
+                "forecast": [
+                    {
+                        "datetime": "2026-09-16T19:00:00+00:00",
+                        "condition": "rainy",
+                        "temperature": 18,
+                        "precipitation_probability": 80,
+                    }
+                ]
+            }
+        }
+    }
+    result = _provider(client).execute("forecast", {"hourly": True})
+    assert result == (
+        "weather.home now: partlycloudy, 21.4°C, humidity 60%, wind 12 km/h; "
+        "19:00: rainy 18°, rain 80%"
+    )
+    assert client.calls[-1] == (
+        "call_service_with_response",
+        "weather",
+        "get_forecasts",
+        {"entity_id": "weather.home", "type": "hourly"},
+    )
+
+
+def test_forecast_caps_periods_by_days_or_twelve_hours():
+    client = _weather_client()
+    client.forecast_response = {
+        "service_response": {
+            "weather.home": {
+                "forecast": [
+                    {
+                        "datetime": f"2026-09-{17 + i:02d}T00:00:00+00:00",
+                        "condition": "sunny",
+                        "temperature": 20 + i,
+                        "templow": 10,
+                        "precipitation_probability": 0,
+                    }
+                    for i in range(5)
+                ]
+            }
+        }
+    }
+    result = _provider(client).execute("forecast", {"days": 2})
+    assert result.count(";") == 2  # current line + 2 daily lines
+
+
+def test_forecast_days_are_clamped_to_one_through_five():
+    client = _weather_client()
+    client.forecast_response = {
+        "service_response": {
+            "weather.home": {
+                "forecast": [
+                    {
+                        "datetime": f"2026-09-{17 + i:02d}T00:00:00+00:00",
+                        "condition": "sunny",
+                        "temperature": 20,
+                        "templow": 10,
+                        "precipitation_probability": 0,
+                    }
+                    for i in range(10)
+                ]
+            }
+        }
+    }
+    result = _provider(client).execute("forecast", {"days": 99})
+    assert result.count(";") == 5  # current line + capped at 5 daily lines
+
+
+def test_forecast_with_no_weather_entity_reports_unavailable():
+    result = _provider(FakeClient()).execute("forecast", {})
+    assert result == "No weather entity is available in Home Assistant."
+
+
+def test_forecast_uses_configured_weather_entity_when_set():
+    client = _weather_client()
+    client.entities.append(
+        HomeAssistantEntity("weather.other", "sunny", {"friendly_name": "Other"})
+    )
+    client.forecast_response = {"service_response": {}}
+    provider = _provider(client, weather_entity="weather.home")
+    provider.execute("forecast", {"days": 1})
+    assert client.calls[-1][3]["entity_id"] == "weather.home"

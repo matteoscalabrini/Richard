@@ -437,6 +437,15 @@ def test_home_assistant_from_table_and_to_table():
     }
 
 
+def test_home_assistant_weather_entity_round_trips():
+    from richard.config import HomeAssistant
+
+    settings = HomeAssistant.from_table({"weather_entity": "weather.home"}, enabled=True)
+    assert settings.weather_entity == "weather.home"
+    assert settings.to_table()["weather_entity"] == "weather.home"
+    assert "weather_entity" not in HomeAssistant.from_table({}).to_table()
+
+
 def test_voice_effect_defaults_and_roundtrip(tmp_path):
     cfg = Config()
     assert (cfg.voice.tts_effect, cfg.voice.tts_effect_strength, cfg.voice.tts_effect_tone) == ("none", 50, 40.0)

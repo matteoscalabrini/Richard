@@ -87,6 +87,7 @@ class HomeAssistant:
     token: str | None = None
     timeout: float = 10.0
     verify_ssl: bool = True
+    weather_entity: str = ""  # entity id for the forecast tool; "" = use the first weather.* entity
 
     @property
     def url(self) -> str:
@@ -111,6 +112,8 @@ class HomeAssistant:
             settings.timeout = float(table["timeout"])
         if "verify_ssl" in table:
             settings.verify_ssl = bool(table["verify_ssl"])
+        if "weather_entity" in table:
+            settings.weather_entity = str(table["weather_entity"])
         if "host" not in table and table.get("url"):
             apply_home_assistant_url(settings, str(table["url"]))
         return settings
@@ -122,6 +125,8 @@ class HomeAssistant:
         }
         if self.token is not None:
             table["token"] = self.token
+        if self.weather_entity:
+            table["weather_entity"] = self.weather_entity
         return table
 
 

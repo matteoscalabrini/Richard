@@ -94,6 +94,33 @@ CALL_SERVICE_SCHEMA = {
     },
 }
 
+FORECAST_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "forecast",
+        "description": (
+            "Weather forecast from Home Assistant for the coming days (or the next hours "
+            "with hourly=true). Use it for any question about upcoming weather, rain, "
+            "temperature or what to wear."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "days": {
+                    "type": "integer",
+                    "description": "Number of days to forecast, 1-5 (default 2). Ignored when hourly is true.",
+                },
+                "hourly": {
+                    "type": "boolean",
+                    "description": (
+                        "Hourly forecast for the next 12 hours instead of daily. Default false."
+                    ),
+                },
+            },
+        },
+    },
+}
+
 _SERVICE_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 _MAX_LIST_RESULTS = 50
 _MAX_STALE_RESULTS = 10
@@ -141,6 +168,74 @@ def _entity_detail(entity: HomeAssistantEntity, now: datetime | None = None) -> 
     if len(encoded) > _MAX_ATTRIBUTES_CHARS:
         encoded = encoded[:_MAX_ATTRIBUTES_CHARS] + "…"
     return f"{_entity_line(entity, now)}; attributes={encoded}"
+
+
+def _num(value: object) -> str | None:
+    if value is None:
+        return None
+    try:
+        return f"{float(value):g}"
+    except (TypeError, ValueError):
+        return None
+
+
+def _current_line(entity: HomeAssistantEntity) -> str:
+    segments = [f"{entity.entity_id} now: {entity.state}"]
+    temp = _num(entity.attributes.get("temperature"))
+    if temp is not None:
+        segments.append(f"{temp}°C")
+    humidity = _num(entity.attributes.get("humidity"))
+    if humidity is not None:
+        segments.append(f"humidity {humidity}%")
+    wind = _num(entity.attributes.get("wind_speed"))
+    if wind is not None:
+        segments.append(f"wind {wind} km/h")
+    return ", ".join(segments)
+
+
+def _period_datetime(period: dict) -> datetime | None:
+    raw = period.get("datetime")
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(str(raw))
+    except ValueError:
+        return None
+
+
+def _temp_range(period: dict) -> str:
+    temp = _num(period.get("temperature"))
+    templow = _num(period.get("templow"))
+    if temp is not None and templow is not None:
+        return f" {temp}°/{templow}°"
+    if temp is not None:
+        return f" {temp}°"
+    if templow is not None:
+        return f" {templow}°"
+    return ""
+
+
+def _rain_suffix(period: dict) -> str:
+    precip = _num(period.get("precipitation_probability"))
+    return f", rain {precip}%" if precip is not None else ""
+
+
+def _daily_line(period: dict) -> str | None:
+    condition = period.get("condition")
+    moment = _period_datetime(period)
+    if condition is None or moment is None:
+        return None
+    label = moment.strftime("%a %Y-%m-%d")
+    return f"{label}: {condition}{_temp_range(period)}{_rain_suffix(period)}"
+
+
+def _hourly_line(period: dict) -> str | None:
+    condition = period.get("condition")
+    moment = _period_datetime(period)
+    if condition is None or moment is None:
+        return None
+    label = moment.strftime("%H:%M")
+    return f"{label}: {condition}{_temp_range(period)}{_rain_suffix(period)}"
 
 
 def entity_snapshot(entity: HomeAssistantEntity) -> dict:
@@ -225,6 +320,7 @@ class HomeAssistantProvider:
         now: Callable[[], datetime] | None = None,
         poll_timeout: float = 2.0,
         poll_interval: float = 0.25,
+        weather_entity: str = "",
     ) -> None:
         self._client = client
         self._clock = clock
@@ -232,13 +328,14 @@ class HomeAssistantProvider:
         self._now = now or (lambda: datetime.now(timezone.utc))
         self._poll_timeout = poll_timeout
         self._poll_interval = poll_interval
+        self._weather_entity = weather_entity
 
     @property
     def client(self) -> HomeAssistantClient:
         return self._client
 
     def schemas(self) -> list[dict]:
-        return [LIST_ENTITIES_SCHEMA, GET_STATE_SCHEMA, CALL_SERVICE_SCHEMA]
+        return [LIST_ENTITIES_SCHEMA, GET_STATE_SCHEMA, CALL_SERVICE_SCHEMA, FORECAST_SCHEMA]
 
     def context(self) -> str | None:
         return (
@@ -262,9 +359,51 @@ class HomeAssistantProvider:
                 return error or _entity_detail(entity, self._now())
             if name == "call_home_assistant_service":
                 return self._call(arguments)
+            if name == "forecast":
+                return self._forecast(arguments)
         except HomeAssistantError as exc:
             return str(exc)
         return f"Unknown tool: {name}."
+
+    def _forecast(self, arguments: dict) -> str:
+        try:
+            days = int(arguments.get("days", 2))
+        except (TypeError, ValueError):
+            days = 2
+        days = max(1, min(5, days))
+        hourly = bool(arguments.get("hourly", False))
+        entities = self._client.list_entities()
+        if self._weather_entity:
+            entity = next(
+                (e for e in entities if e.entity_id == self._weather_entity), None
+            )
+        else:
+            entity = next((e for e in entities if e.domain == "weather"), None)
+        if entity is None:
+            return "No weather entity is available in Home Assistant."
+        response = self._client.call_service_with_response(
+            "weather",
+            "get_forecasts",
+            {"entity_id": entity.entity_id, "type": "hourly" if hourly else "daily"},
+        )
+        periods: list = []
+        service_response = response.get("service_response")
+        if isinstance(service_response, dict):
+            entry = service_response.get(entity.entity_id)
+            if isinstance(entry, dict):
+                raw_periods = entry.get("forecast")
+                if isinstance(raw_periods, list):
+                    periods = raw_periods
+        cap = 12 if hourly else days
+        formatter = _hourly_line if hourly else _daily_line
+        lines = [_current_line(entity)]
+        for period in periods[:cap]:
+            if not isinstance(period, dict):
+                continue
+            line = formatter(period)
+            if line:
+                lines.append(line)
+        return "; ".join(lines)
 
     def _list(self, arguments: dict) -> str:
         domain = str(arguments.get("domain", "")).strip().lower().rstrip(".")

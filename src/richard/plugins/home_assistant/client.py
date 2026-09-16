@@ -87,6 +87,17 @@ class HomeAssistantClient:
             return []
         return [HomeAssistantEntity.from_payload(item) for item in payload]
 
+    def call_service_with_response(self, domain: str, service: str, data: dict) -> dict:
+        payload = self._request(
+            "POST",
+            f"/api/services/{domain}/{service}",
+            json=data,
+            params={"return_response": ""},
+        )
+        if not isinstance(payload, dict):
+            raise HomeAssistantError("Home Assistant returned an invalid service response")
+        return payload
+
     def _request(self, method: str, path: str, **kwargs):
         try:
             response = self._client.request(
