@@ -86,6 +86,23 @@ def test_config_defaults_are_applied_under_the_table(tmp_path):
     assert plugin.ctx.data_dir == tmp_path / "good"
 
 
+def test_build_passes_timezone_through_to_context(tmp_path):
+    plugin = Good()
+    registry = PluginRegistry([plugin])
+    registry.build(
+        ["good"], {}, persona_name="Richard", data_dir=tmp_path,
+        write=lambda s: None, timezone="Europe/Rome",
+    )
+    assert plugin.ctx.timezone == "Europe/Rome"
+
+
+def test_build_defaults_timezone_to_empty_string(tmp_path):
+    plugin = Good()
+    registry = PluginRegistry([plugin])
+    _build(registry, ["good"], tmp_path=tmp_path)
+    assert plugin.ctx.timezone == ""
+
+
 def test_build_failure_is_isolated_and_logged(tmp_path, caplog):
     lines = []
     registry = PluginRegistry([Broken(), Good()])

@@ -24,6 +24,7 @@ class PluginContext:
     persona_name: str
     data_dir: Path  # ~/.richard/plugins/<name>/ for plugin-owned state
     write: Callable[[str], None]
+    timezone: str = ""  # IANA name (e.g. "Europe/Rome"); "" means system local
 
 
 @dataclass(frozen=True)

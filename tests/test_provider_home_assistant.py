@@ -466,7 +466,10 @@ def test_forecast_hourly_formats_time_and_single_temperature():
             }
         }
     }
-    result = _provider(client).execute("forecast", {"hourly": True})
+    # Pin UTC explicitly: forecast times default to *system* local when unset
+    # (see test_forecast_hourly_uses_configured_timezone), which would make this
+    # assertion depend on the machine running the suite otherwise.
+    result = _provider(client, tz_name="UTC").execute("forecast", {"hourly": True})
     assert result == (
         "weather.home now: partlycloudy, 21.4°C, humidity 60%, wind 12 km/h; "
         "19:00: rainy 18°, rain 80%"
@@ -526,6 +529,33 @@ def test_forecast_days_are_clamped_to_one_through_five():
 def test_forecast_with_no_weather_entity_reports_unavailable():
     result = _provider(FakeClient()).execute("forecast", {})
     assert result == "No weather entity is available in Home Assistant."
+
+
+def test_forecast_hourly_uses_configured_timezone():
+    client = _weather_client()
+    client.forecast_response = {
+        "service_response": {
+            "weather.home": {
+                "forecast": [
+                    {
+                        "datetime": "2026-09-17T19:00:00+00:00",
+                        "condition": "rainy",
+                        "temperature": 18,
+                        "precipitation_probability": 80,
+                    }
+                ]
+            }
+        }
+    }
+    result = _provider(client, tz_name="Europe/Rome").execute("forecast", {"hourly": True})
+    assert "21:00: rainy 18°, rain 80%" in result
+
+
+def test_forecast_missing_configured_weather_entity_names_it():
+    client = _weather_client()
+    provider = _provider(client, weather_entity="weather.does_not_exist")
+    result = provider.execute("forecast", {})
+    assert result == "Configured weather entity 'weather.does_not_exist' was not found in Home Assistant."
 
 
 def test_forecast_uses_configured_weather_entity_when_set():

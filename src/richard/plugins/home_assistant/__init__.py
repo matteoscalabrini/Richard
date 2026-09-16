@@ -30,7 +30,11 @@ class HomeAssistantPlugin:
             settings.url, settings.token, timeout=settings.timeout, verify_ssl=settings.verify_ssl,
         )
         return PluginParts(
-            providers=[HomeAssistantProvider(client, weather_entity=settings.weather_entity)],
+            providers=[
+                HomeAssistantProvider(
+                    client, weather_entity=settings.weather_entity, tz_name=ctx.timezone or None,
+                )
+            ],
             target_readers={KIND: HomeAssistantTargetReader(client)},
             context=f"Home Assistant is connected at {settings.url}.",
         )

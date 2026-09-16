@@ -578,6 +578,7 @@ def _build_plugins(config, write: Callable[[str], None] = print):
     registry.build(
         config.plugins.enabled, config.plugins.tables,
         persona_name=config.personality.name, data_dir=default_plugins_dir(), write=write,
+        timezone=config.timezone,
     )
     return registry
 

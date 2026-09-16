@@ -6,6 +6,7 @@ import time
 from datetime import datetime, timezone
 from typing import Callable
 
+from richard.clock import zone_for
 from richard.errors import HomeAssistantError
 from richard.plugins.home_assistant.client import HomeAssistantClient, HomeAssistantEntity
 from richard.verification import (
@@ -193,14 +194,15 @@ def _current_line(entity: HomeAssistantEntity) -> str:
     return ", ".join(segments)
 
 
-def _period_datetime(period: dict) -> datetime | None:
+def _period_datetime(period: dict, zone=None) -> datetime | None:
     raw = period.get("datetime")
     if not raw:
         return None
     try:
-        return datetime.fromisoformat(str(raw))
+        moment = datetime.fromisoformat(str(raw))
     except ValueError:
         return None
+    return moment.astimezone(zone)
 
 
 def _temp_range(period: dict) -> str:
@@ -220,18 +222,18 @@ def _rain_suffix(period: dict) -> str:
     return f", rain {precip}%" if precip is not None else ""
 
 
-def _daily_line(period: dict) -> str | None:
+def _daily_line(period: dict, zone=None) -> str | None:
     condition = period.get("condition")
-    moment = _period_datetime(period)
+    moment = _period_datetime(period, zone)
     if condition is None or moment is None:
         return None
     label = moment.strftime("%a %Y-%m-%d")
     return f"{label}: {condition}{_temp_range(period)}{_rain_suffix(period)}"
 
 
-def _hourly_line(period: dict) -> str | None:
+def _hourly_line(period: dict, zone=None) -> str | None:
     condition = period.get("condition")
-    moment = _period_datetime(period)
+    moment = _period_datetime(period, zone)
     if condition is None or moment is None:
         return None
     label = moment.strftime("%H:%M")
@@ -321,6 +323,7 @@ class HomeAssistantProvider:
         poll_timeout: float = 2.0,
         poll_interval: float = 0.25,
         weather_entity: str = "",
+        tz_name: str | None = None,
     ) -> None:
         self._client = client
         self._clock = clock
@@ -329,6 +332,7 @@ class HomeAssistantProvider:
         self._poll_timeout = poll_timeout
         self._poll_interval = poll_interval
         self._weather_entity = weather_entity
+        self._tz_name = tz_name
 
     @property
     def client(self) -> HomeAssistantClient:
@@ -377,6 +381,11 @@ class HomeAssistantProvider:
             entity = next(
                 (e for e in entities if e.entity_id == self._weather_entity), None
             )
+            if entity is None:
+                return (
+                    f"Configured weather entity '{self._weather_entity}' was not found "
+                    "in Home Assistant."
+                )
         else:
             entity = next((e for e in entities if e.domain == "weather"), None)
         if entity is None:
@@ -395,12 +404,12 @@ class HomeAssistantProvider:
                 if isinstance(raw_periods, list):
                     periods = raw_periods
         cap = 12 if hourly else days
-        formatter = _hourly_line if hourly else _daily_line
+        zone = zone_for(self._tz_name)
         lines = [_current_line(entity)]
         for period in periods[:cap]:
             if not isinstance(period, dict):
                 continue
-            line = formatter(period)
+            line = _hourly_line(period, zone) if hourly else _daily_line(period, zone)
             if line:
                 lines.append(line)
         return "; ".join(lines)

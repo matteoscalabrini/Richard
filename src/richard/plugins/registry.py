@@ -85,6 +85,7 @@ class PluginRegistry:
         persona_name: str,
         data_dir: Path,
         write: Callable[[str], None] = print,
+        timezone: str = "",
     ) -> None:
         self._order = list(enabled)
         for name in enabled:
@@ -101,6 +102,7 @@ class PluginRegistry:
                 ctx = PluginContext(
                     config=config, persona_name=persona_name,
                     data_dir=Path(data_dir) / name, write=write,
+                    timezone=timezone,
                 )
                 record.parts = plugin.build(ctx)
                 record.error = None
