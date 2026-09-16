@@ -26,15 +26,17 @@ def test_prepare_realtime_models_uses_configured_stt_model():
         config,
         write=lambda line: None,
         ensure_vad=lambda **kwargs: calls.append(("vad", kwargs)),
+        ensure_turn=lambda **kwargs: calls.append(("turn", kwargs)),
         model_factory=model_factory,
     )
 
     assert calls[0][0] == "vad"
-    assert calls[1] == (
+    assert calls[1][0] == "turn"
+    assert calls[2] == (
         "large-v3-turbo",
         {"device": "auto", "compute_type": "default"},
     )
-    assert calls[2] == (
+    assert calls[3] == (
         "decode",
         (16000,),
         "float32",
@@ -44,6 +46,28 @@ def test_prepare_realtime_models_uses_configured_stt_model():
             "condition_on_previous_text": False,
         },
     )
+
+
+def test_prepare_realtime_models_skips_turn_download_in_silence_mode():
+    from richard.setup.deployment import prepare_realtime_models
+
+    config = Config()
+    config.voice.turn_detector = "silence"
+    calls = []
+
+    class Model:
+        def transcribe(self, audio, **kwargs):
+            return iter(()), object()
+
+    prepare_realtime_models(
+        config,
+        write=lambda line: None,
+        ensure_vad=lambda **kwargs: calls.append(("vad", kwargs)),
+        ensure_turn=lambda **kwargs: calls.append(("turn", kwargs)),
+        model_factory=lambda model, **kwargs: Model(),
+    )
+
+    assert [c[0] for c in calls] == ["vad"]  # turn detector not downloaded in silence mode
 
 
 def test_verify_realtime_accepts_session_created_and_sends_token():
