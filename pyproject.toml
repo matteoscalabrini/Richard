@@ -49,6 +49,7 @@ richard = "richard.cli:main"
 [project.entry-points."richard.plugins"]
 home_assistant = "richard.plugins.home_assistant:HomeAssistantPlugin"
 perception = "richard.plugins.perception:PerceptionPlugin"
+web_search = "richard.plugins.web_search:WebSearchPlugin"
 
 [tool.setuptools.packages.find]
 where = ["src"]

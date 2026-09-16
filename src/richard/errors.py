@@ -13,3 +13,7 @@ class BrainRejectedInput(BrainUnreachable):
 
 class HomeAssistantError(RichardError):
     """Home Assistant could not be reached or returned an invalid response."""
+
+
+class WebSearchError(RichardError):
+    """The web search provider could not be reached or returned an error."""
