@@ -161,6 +161,14 @@ def test_promises_action_heuristic():
     assert _promises_action("Let me dim the lights.")
     assert not _promises_action("The fan is off.")
     assert not _promises_action("Done — lamp's off, confirmed at 40%.")
+    # Hesitation and looking are not device actions; nudging them pushed the model
+    # into camera calls (review 2026-09-16).
+    assert not _promises_action("Mm, let me think.")
+    assert not _promises_action("Let me see.")
+    assert not _promises_action("Let me take a look.")
+    assert not _promises_action("Let me work that out.")
+    assert not _promises_action("One moment.")
+    assert not _promises_action("Let me check the image.")
 
 
 def test_respond_nudges_promise_without_tool_call_and_executes():

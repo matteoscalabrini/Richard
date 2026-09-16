@@ -26,16 +26,21 @@ NUDGE_PROMPT = (
     f"execute, reply exactly {NOTHING_TO_RUN}."
 )
 
-# First-person commitments and present-progressive device verbs. A false positive
-# costs one short extra completion answered by the sentinel; a false negative is
-# the status quo (the user repeats themselves), so the net is deliberately modest.
+# First-person commitments and present-progressive device verbs. "Let me" counts only
+# when followed by something other than thinking or looking: "let me think", "let me
+# see", "let me take a look" and "one moment" are hesitations, and nudging them sent the
+# model looking for a tool to justify the phrase (review 2026-09-16). A false positive
+# costs one short extra completion answered by the sentinel; a false negative is the
+# status quo (the user repeats themselves), so the net is deliberately modest.
 _PROMISE_RE = re.compile(
     r"(?i)\b(?:"
-    r"i['’]?ll|i will|let me|i['’]?m going to|i am going to|"
-    r"one (?:moment|sec(?:ond)?)|right away|"
+    r"i['’]?ll|i will|i['’]?m going to|i am going to|"
+    r"let me(?!\s+(?:think|see|check|look|take a look|have a look|work))|"
+    r"right away|"
     r"turning|switching|setting|dimming|starting|stopping|opening|closing|locking|unlocking"
     r")\b"
 )
+
 
 
 def _promises_action(text: str) -> bool:
