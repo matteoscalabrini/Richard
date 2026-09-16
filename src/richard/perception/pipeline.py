@@ -1,8 +1,8 @@
 """One pipeline per frame source, one service for all of them.
 
 SourcePipeline.step(): pull the latest frame (skip if unchanged), motion stage,
-person stage, face stage (opt-in, only while someone unnamed is present, once a
-second), presence state → raw events. PerceptionService: hub, pipelines, gate,
+person stage, face stage (opt-in, while anyone is present, once a second),
+presence state → raw events. PerceptionService: hub, pipelines, gate,
 log, gallery, sinks; the thread per source runs step() at the stream rate. Nothing
 here touches a socket; the web app and the plugin call into it.
 """
