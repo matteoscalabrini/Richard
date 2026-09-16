@@ -148,6 +148,20 @@ def test_plugin_build_honours_max_results_from_config(tmp_path):
     assert stub.calls[0]["max_results"] == 5
 
 
+def test_plugin_build_falls_back_to_default_max_results_when_not_numeric(tmp_path):
+    key_file = tmp_path / "tavily.key"
+    key_file.write_text("secret-key\n")
+    stub = StubClient(result=SearchResult(answer=None, results=[]))
+    plugin = WebSearchPlugin(client_factory=lambda api_key, **kw: stub)
+    ctx = PluginContext(
+        config={"api_key_file": str(key_file), "max_results": "not-a-number"},
+        persona_name="R", data_dir=tmp_path, write=lambda s: None,
+    )
+    parts = plugin.build(ctx)
+    parts.providers[0].execute("web_search", {"query": "q"})
+    assert stub.calls[0]["max_results"] == 3
+
+
 def test_plugin_build_raises_when_key_file_is_missing(tmp_path):
     missing = tmp_path / "nope.key"
     plugin = WebSearchPlugin()

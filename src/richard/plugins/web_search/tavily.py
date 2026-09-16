@@ -33,7 +33,7 @@ class TavilyClient:
         client: httpx.Client | None = None,
     ) -> None:
         self._api_key = api_key
-        self._client = client or httpx.Client(timeout=timeout)
+        self._client = client or httpx.Client(timeout=httpx.Timeout(timeout, connect=3.0))
 
     @property
     def _headers(self) -> dict[str, str]:
@@ -45,7 +45,7 @@ class TavilyClient:
             "search_depth": "basic",
             "include_answer": "basic",
             "max_results": max_results,
-            "topic": "news" if recent else "general",
+            "topic": "general",
         }
         if recent:
             body["time_range"] = "week"

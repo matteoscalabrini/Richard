@@ -12,7 +12,7 @@ def _client(handler):
     return TavilyClient("secret-key", client=httpx.Client(transport=transport))
 
 
-def test_search_recent_sends_bearer_auth_and_news_body():
+def test_search_recent_sends_bearer_auth_and_general_topic_with_week_range():
     def handler(request):
         assert request.url == "https://api.tavily.com/search"
         assert request.headers["Authorization"] == "Bearer secret-key"
@@ -21,7 +21,7 @@ def test_search_recent_sends_bearer_auth_and_news_body():
             "search_depth": "basic",
             "include_answer": "basic",
             "max_results": 3,
-            "topic": "news",
+            "topic": "general",
             "time_range": "week",
         }
         return httpx.Response(
@@ -79,6 +79,13 @@ def test_other_status_reports_http_code():
     client = _client(lambda request: httpx.Response(500, request=request))
     with pytest.raises(WebSearchError, match="web search failed: HTTP 500"):
         client.search("query")
+
+
+def test_default_client_uses_bounded_read_and_connect_timeouts():
+    client = TavilyClient("secret-key")
+    timeout = client._client.timeout
+    assert timeout.read == 8.0
+    assert timeout.connect == 3.0
 
 
 def test_transport_error_is_unreachable():
