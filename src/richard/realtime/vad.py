@@ -16,6 +16,10 @@ SILERO_URL = (
     "https://github.com/snakers4/silero-vad/raw/v5.1.2/src/silero_vad/data/silero_vad.onnx"
 )
 SILERO_FILE = "silero_vad.onnx"
+SMART_TURN_URL = (
+    "https://huggingface.co/pipecat-ai/smart-turn-v3/resolve/main/smart-turn-v3.2-cpu.onnx"
+)
+SMART_TURN_FILE = "smart-turn-v3.2-cpu.onnx"
 FRAME_SAMPLES = 512  # Silero v5 accepts exactly 512-sample frames at 16 kHz (32 ms)
 FRAME_BYTES = FRAME_SAMPLES * 2  # PCM16
 
@@ -45,6 +49,26 @@ def ensure_silero(*, models_dir: Path | None = None, client=None, write=print) -
         resp.raise_for_status()
     except Exception as exc:
         raise RuntimeError(f"Failed to download Silero VAD from {SILERO_URL}: {exc}") from exc
+    target.write_bytes(resp.content)
+    return target
+
+
+def ensure_smart_turn(*, models_dir: Path | None = None, client=None, write=print) -> Path:
+    models_dir = models_dir or default_models_dir()
+    models_dir.mkdir(parents=True, exist_ok=True)
+    target = models_dir / SMART_TURN_FILE
+    if _present(target):
+        return target
+    if client is None:
+        import httpx
+
+        client = httpx.Client(timeout=120.0, follow_redirects=True)
+    write(f"Downloading {SMART_TURN_FILE} from Hugging Face...")
+    try:
+        resp = client.get(SMART_TURN_URL)
+        resp.raise_for_status()
+    except Exception as exc:
+        raise RuntimeError(f"Failed to download smart-turn from {SMART_TURN_URL}: {exc}") from exc
     target.write_bytes(resp.content)
     return target
 
@@ -96,7 +120,9 @@ class EndpointDetector:
     """
 
     def __init__(self, vad, *, samplerate: int = 16000, frame_ms: int = 32,
-                 silence_ms: int = 400, preroll_ms: int = 1000, max_ms: int = 30000) -> None:
+                 silence_ms: int = 400, preroll_ms: int = 1000, max_ms: int = 30000,
+                 turn_predictor=None, min_silence_ms: int = 160, max_silence_ms: int = 1200,
+                 predictor_every_ms: int = 160, threshold: float = 0.5) -> None:
         self._vad = vad
         self._samplerate = samplerate
         self._silence_frames = max(1, silence_ms // frame_ms)
@@ -106,6 +132,12 @@ class EndpointDetector:
         self._in_speech = False
         self._trailing = 0
         self._frames = 0
+        self._turn_predictor = turn_predictor
+        self._min_silence_frames = max(1, min_silence_ms // frame_ms)
+        self._max_silence_frames = max(1, max_silence_ms // frame_ms)
+        self._predictor_every_frames = max(1, predictor_every_ms // frame_ms)
+        self._threshold = threshold
+        self._predictor_warned = False
 
     @property
     def in_speech(self) -> bool:
@@ -131,7 +163,30 @@ class EndpointDetector:
         self._collected += frame
         self._frames += 1
         self._trailing = 0 if speech else self._trailing + 1
-        if self._trailing >= self._silence_frames or self._frames >= self._max_frames:
+        end = self._frames >= self._max_frames
+        if self._turn_predictor is not None:
+            if (
+                self._trailing >= self._min_silence_frames
+                and (self._trailing - self._min_silence_frames) % self._predictor_every_frames == 0
+            ):
+                try:
+                    score = self._turn_predictor.is_complete(bytes(self._collected)[-256000:])
+                    if score >= self._threshold:
+                        end = True
+                except Exception:
+                    if not self._predictor_warned:
+                        self._predictor_warned = True
+                        import logging
+
+                        logging.getLogger(__name__).warning(
+                            "turn_predictor.is_complete failed; falling back to silence ceiling",
+                            exc_info=True,
+                        )
+            if self._trailing >= self._max_silence_frames:
+                end = True
+        elif self._trailing >= self._silence_frames:
+            end = True
+        if end:
             events.append(("utterance", bytes(self._collected)))
             self._in_speech = False
             self._collected = bytearray()

@@ -1,6 +1,12 @@
 import numpy as np
 
-from richard.realtime.vad import FRAME_BYTES, FRAME_SAMPLES, SileroVAD, ensure_silero
+from richard.realtime.vad import (
+    FRAME_BYTES,
+    FRAME_SAMPLES,
+    SileroVAD,
+    ensure_silero,
+    ensure_smart_turn,
+)
 
 
 class FakeOrtSession:
@@ -124,3 +130,72 @@ def test_preroll_ring_is_bounded():
     d.feed(b"s" * 1024)
     # preroll_ms=64 → only the last 2 silent frames precede the speech frame
     assert d.collected() == bytes([8]) * 1024 + bytes([9]) * 1024 + b"s" * 1024
+
+
+class ScriptedPredictor:
+    def __init__(self, scores):
+        self.scores = list(scores)
+        self.calls = []
+
+    def is_complete(self, pcm):
+        self.calls.append(pcm)
+        return self.scores.pop(0)
+
+
+def test_turn_predictor_ends_utterance_on_high_score_before_ceiling():
+    # speech, then trailing silence; min_silence_ms=64 (2 frames), predictor polled
+    # every 64 ms (2 frames), ceiling at max_silence_ms=320 (10 frames).
+    predictor = ScriptedPredictor([0.1, 0.9])
+    d = _detector(
+        [True, False, False, False, False],
+        turn_predictor=predictor,
+        min_silence_ms=64,
+        max_silence_ms=320,
+        predictor_every_ms=64,
+    )
+    events = [e for i in range(5) for e in d.feed(bytes([i]) * 1024)]
+    assert [e[0] for e in events] == ["speech_started", "utterance"]
+    assert len(predictor.calls) == 2  # ended right after the second (0.9) call
+    assert not d.in_speech
+
+
+def test_turn_predictor_falls_back_to_ceiling_when_score_stays_low():
+    predictor = ScriptedPredictor([0.1] * 10)
+    d = _detector(
+        [True] + [False] * 10,
+        turn_predictor=predictor,
+        min_silence_ms=64,
+        max_silence_ms=320,
+        predictor_every_ms=64,
+    )
+    events = [e for i in range(11) for e in d.feed(bytes([i]) * 1024)]
+    assert [e[0] for e in events] == ["speech_started", "utterance"]
+    assert len(predictor.calls) == 5  # trailing frames 2,4,6,8,10
+
+
+def test_no_turn_predictor_uses_silence_ms_as_today():
+    d = _detector([True, True, False, False, False], turn_predictor=None)
+    frames = [bytes([i]) * 1024 for i in range(5)]
+    events = [e for f in frames for e in d.feed(f)]
+    assert [e[0] for e in events] == ["speech_started", "utterance"]
+
+
+def test_ensure_smart_turn_skips_download_when_present(tmp_path):
+    target = tmp_path / "smart-turn-v3.2-cpu.onnx"
+    target.write_bytes(b"x" * 2048)  # > 1 KiB guard, mirrors _present
+    assert ensure_smart_turn(models_dir=tmp_path, client=None) == target
+
+
+def test_ensure_smart_turn_downloads_when_missing(tmp_path):
+    class FakeClient:
+        def get(self, url):
+            class R:
+                content = b"o" * 4096
+
+                def raise_for_status(self):
+                    pass
+
+            return R()
+
+    path = ensure_smart_turn(models_dir=tmp_path, client=FakeClient(), write=lambda *_: None)
+    assert path.read_bytes() == b"o" * 4096

@@ -16,20 +16,27 @@ def prepare_realtime_models(
     *,
     write: Callable[[str], None] = print,
     ensure_vad=None,
+    ensure_turn=None,
     model_factory=None,
 ) -> None:
-    """Download and initialize the configured VAD and STT models."""
+    """Download and initialize the configured VAD, turn-detector, and STT models."""
     config = config or load_config()
     if ensure_vad is None:
         from richard.realtime.vad import ensure_silero
 
         ensure_vad = ensure_silero
+    if ensure_turn is None:
+        from richard.realtime.vad import ensure_smart_turn
+
+        ensure_turn = ensure_smart_turn
     if model_factory is None:
         from faster_whisper import WhisperModel
 
         model_factory = WhisperModel
 
     ensure_vad(write=write)
+    if config.voice.turn_detector == "smart":
+        ensure_turn(write=write)
     write(f"Preparing faster-whisper model {config.voice.stt_model}...")
     model = model_factory(
         config.voice.stt_model, device="auto", compute_type="default"

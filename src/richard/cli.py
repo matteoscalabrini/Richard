@@ -475,11 +475,13 @@ def _build_stt(config):
 
 
 def _realtime_session_factory(config, *, brain, providers_fn, synth, transcriber, vad_factory,
-                              registry=None, perception=None, brains=None):
+                              registry=None, perception=None, brains=None, turn_predictor=None):
     """Build the per-connection session factory for /v1/realtime.
 
     One transcriber and one TTS engine are shared across sessions (models load
-    once); each session gets its own Engine, detector, and VAD state.
+    once); each session gets its own Engine, detector, and VAD state. The
+    smart-turn predictor (if any) is likewise built once and shared across
+    sessions — it's stateless per call, so there's nothing to isolate.
     """
     from richard.realtime.session import RealtimeSession
     from richard.realtime.cues import cue_fingerprint
@@ -488,7 +490,11 @@ def _realtime_session_factory(config, *, brain, providers_fn, synth, transcriber
 
     def factory(emit):
         detector = EndpointDetector(
-            vad_factory(), silence_ms=config.voice.endpoint_silence_ms
+            vad_factory(),
+            silence_ms=config.voice.endpoint_silence_ms,
+            turn_predictor=turn_predictor,
+            min_silence_ms=160,
+            max_silence_ms=config.voice.endpoint_max_silence_ms,
         )
         providers = []
         camera_providers = []
@@ -859,9 +865,17 @@ def _run_serve(write: Callable[[str], None] = print) -> int:
         try:
             from richard.realtime.server import serve_realtime
             from richard.realtime.stt import TurnTranscriber
-            from richard.realtime.vad import SileroVAD, ensure_silero
+            from richard.realtime.vad import SileroVAD, ensure_silero, ensure_smart_turn
 
             silero_path = ensure_silero(write=write)
+            predictor = None
+            if config.voice.turn_detector == "smart":
+                try:
+                    from richard.realtime.turn import SmartTurn
+
+                    predictor = SmartTurn(ensure_smart_turn(write=write))
+                except Exception as exc:
+                    write(f"smart-turn unavailable ({exc}); using silence endpointing")
             transcriber = TurnTranscriber(
                 config.voice.stt_model,
                 language=None if config.voice.language == "auto" else config.voice.language,
@@ -871,6 +885,7 @@ def _run_serve(write: Callable[[str], None] = print) -> int:
                 config, brain=brain, providers_fn=_serve_providers, synth=synth,
                 transcriber=transcriber, vad_factory=lambda: SileroVAD(silero_path),
                 registry=session_registry, perception=perception_service, brains=brains,
+                turn_predictor=predictor,
             )
             realtime_coro = _serve_realtime_guarded(
                 serve_realtime(

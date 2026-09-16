@@ -32,6 +32,9 @@ voice = [
     "sounddevice>=0.4",
     "webrtcvad-wheels>=2.0.14",
     "websockets>=14",
+    # Smart-turn v3.2 semantic end-of-turn: WhisperFeatureExtractor for the
+    # ONNX model's mel-spectrogram input (no torch required at runtime).
+    "transformers>=4.40",
 ]
 perception = [
     "Pillow>=10",
