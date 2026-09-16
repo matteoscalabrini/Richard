@@ -209,6 +209,54 @@ def test_turn_predictor_exception_falls_back_to_ceiling_and_warns_once(caplog):
     assert "turn_predictor.is_complete failed" in warnings[0].message
 
 
+def test_predictor_can_end_at_the_silence_floor_when_min_silence_ms_unset():
+    # silence_ms=96 -> floor 3 frames. min_silence_ms left unset, so the
+    # predictor floor matches the no-predictor floor exactly (never lower).
+    predictor = ScriptedPredictor([0.9])
+    d = _detector(
+        [True, False, False, False],
+        turn_predictor=predictor,
+        max_silence_ms=320,
+        predictor_every_ms=64,
+    )
+    events = [e for i in range(4) for e in d.feed(bytes([i]) * 1024)]
+    assert [e[0] for e in events] == ["speech_started", "utterance"]
+    assert len(predictor.calls) == 1  # first poll at trailing==3 (the floor)
+    assert events[1][2]["reason"] == "predictor"
+    assert events[1][2]["score"] == 0.9
+
+
+def test_predictor_below_threshold_waits_for_ceiling():
+    # threshold defaults to 0.8; a 0.7 score must not end the turn early —
+    # it waits for the max_silence_ms ceiling instead.
+    predictor = ScriptedPredictor([0.7, 0.7, 0.7, 0.7, 0.7])
+    d = _detector(
+        [True] + [False] * 10,
+        turn_predictor=predictor,
+        min_silence_ms=64,
+        max_silence_ms=320,
+        predictor_every_ms=64,
+    )
+    events = [e for i in range(11) for e in d.feed(bytes([i]) * 1024)]
+    assert [e[0] for e in events] == ["speech_started", "utterance"]
+    assert events[1][2]["reason"] == "ceiling"
+    assert events[1][2]["score"] == 0.7
+
+
+def test_endpoint_decision_is_logged_at_info(caplog):
+    d = _detector([True, True, False, False, False], turn_predictor=None)
+    frames = [bytes([i]) * 1024 for i in range(5)]
+    with caplog.at_level("INFO", logger="richard.realtime"):
+        for f in frames:
+            d.feed(f)
+    records = [r for r in caplog.records if r.name == "richard.realtime"]
+    assert len(records) == 1
+    message = records[0].getMessage()
+    assert message.startswith("endpoint: reason=silence trailing_ms=")
+    assert "score=none" in message
+    assert "polls=0" in message
+
+
 def test_ensure_smart_turn_skips_download_when_present(tmp_path):
     target = tmp_path / "smart-turn-v3.2-cpu.onnx"
     target.write_bytes(b"x" * 2048)  # > 1 KiB guard, mirrors _present

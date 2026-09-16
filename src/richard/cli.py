@@ -513,7 +513,7 @@ def _realtime_session_factory(config, *, brain, providers_fn, synth, transcriber
             vad_factory(),
             silence_ms=config.voice.endpoint_silence_ms,
             turn_predictor=turn_predictor,
-            min_silence_ms=160,
+            min_silence_ms=config.voice.endpoint_silence_ms,
             max_silence_ms=config.voice.endpoint_max_silence_ms,
         )
         providers = []
