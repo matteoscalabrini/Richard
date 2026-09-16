@@ -277,10 +277,10 @@ def test_run_chat_engine_skips_diagnostics_without_home_assistant(tmp_path, monk
 
 def test_engine_providers_order():
     providers = cli._engine_providers(
-        memory_provider="memory", plugin_providers=["ha", "reachy"], control_provider="loops", diagnostics="diagnostics",
+        memory_provider="memory", clock_provider="clock", plugin_providers=["ha", "reachy"], control_provider="loops", diagnostics="diagnostics",
     )
-    assert providers == ["memory", "ha", "reachy", "loops", "diagnostics"]
-    assert cli._engine_providers(memory_provider="memory", plugin_providers=[], control_provider="loops", diagnostics=None) == ["memory", "loops"]
+    assert providers == ["memory", "clock", "ha", "reachy", "loops", "diagnostics"]
+    assert cli._engine_providers(memory_provider="memory", clock_provider="clock", plugin_providers=[], control_provider="loops", diagnostics=None) == ["memory", "clock", "loops"]
 
 
 def test_build_diagnostics_needs_at_least_one_reader():

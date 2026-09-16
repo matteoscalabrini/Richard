@@ -1,6 +1,7 @@
 """Local time for prompts and tools. The system head is pinned for the prompt cache, so
-the clock never goes there: callers put `now_line()` into the per-turn, non-persisted
-observation slot, and memories render their stored UTC timestamp through `stamp()`."""
+the clock rides inside the persisted user message as a `Now:` prefix line via `now_line()`,
+and the `clock` tool answers explicit questions about the time. Memories render their
+stored UTC timestamp through `stamp()`."""
 from __future__ import annotations
 
 from datetime import datetime

@@ -21,6 +21,7 @@ from richard.conversation import Conversation
 from richard.engine import Engine
 from richard.memory import MemoryStore, default_memory_path
 from richard.diagnostics import DiagnosticsProvider
+from richard.providers.clock import ClockProvider
 from richard.providers.memory import MemoryProvider
 from richard.repl import run_repl
 from richard.setup import run_setup
@@ -360,6 +361,7 @@ def _run_chat() -> int:
         control_store, control_reader, control_provider = _build_control_loops(registry)
         providers = _engine_providers(
             memory_provider=MemoryProvider(store, tz_name=config.timezone or None),
+            clock_provider=ClockProvider(tz_name=config.timezone or None),
             plugin_providers=[*registry.providers(), ContextLinesProvider(registry.context_lines())],
             control_provider=control_provider,
             diagnostics=_build_diagnostics(registry),
@@ -564,9 +566,9 @@ def _build_diagnostics(registry):
     return DiagnosticsProvider(DiagnosticsService(readers=readers))
 
 
-def _engine_providers(*, memory_provider, plugin_providers, control_provider, diagnostics):
-    """The provider list shared by every engine: memory, plugins, loops, diagnostics."""
-    providers = [memory_provider, *plugin_providers, control_provider]
+def _engine_providers(*, memory_provider, clock_provider, plugin_providers, control_provider, diagnostics):
+    """The provider list shared by every engine: memory, clock, plugins, loops, diagnostics."""
+    providers = [memory_provider, clock_provider, *plugin_providers, control_provider]
     if diagnostics is not None:
         providers.append(diagnostics)
     return providers
@@ -630,6 +632,7 @@ def _run_voice(write: Callable[[str], None] = print) -> int:
         control_store, control_reader, control_provider = _build_control_loops(registry)
         providers = _engine_providers(
             memory_provider=MemoryProvider(store, tz_name=config.timezone or None),
+            clock_provider=ClockProvider(tz_name=config.timezone or None),
             plugin_providers=[*registry.providers(), ContextLinesProvider(registry.context_lines())],
             control_provider=control_provider,
             diagnostics=_build_diagnostics(registry),
@@ -732,6 +735,7 @@ def _run_serve(write: Callable[[str], None] = print) -> int:
     synth = _build_tts(config, write)
     memory_store = MemoryStore(default_memory_path())
     memory_provider = MemoryProvider(memory_store, tz_name=config.timezone or None)
+    clock_provider = ClockProvider(tz_name=config.timezone or None)
     relays = RelayRegistry()
     registry = _build_plugins(config, write)
 
@@ -757,6 +761,7 @@ def _run_serve(write: Callable[[str], None] = print) -> int:
         personality=config.personality, stt=stt, synthesizer=synth,
         relays=relays,
         extra_providers=[
+            clock_provider,
             *plugin_providers,
             control_provider,
             *([diagnostics_provider] if diagnostics_provider is not None else []),
@@ -775,6 +780,7 @@ def _run_serve(write: Callable[[str], None] = print) -> int:
     def _serve_providers():
         return _engine_providers(
             memory_provider=memory_provider,
+            clock_provider=clock_provider,
             plugin_providers=plugin_providers,
             control_provider=control_provider,
             diagnostics=diagnostics_provider,
