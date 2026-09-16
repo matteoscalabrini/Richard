@@ -94,7 +94,8 @@ def test_response_carries_utterance_language_without_shared_transcriber_state():
         wait(done)
         created = next(e["response"] for e in emitted if e["type"] == "response.created")
         assert created["language"] == "it"
-        assert session.conversation.history()[0].text() == "Buongiorno"
+        assert session.conversation.history()[0].text().startswith("Now: ")
+        assert session.conversation.history()[0].text().endswith("Buongiorno")
     finally:
         session.close()
 
@@ -373,7 +374,9 @@ def test_queued_typed_turn_runs_when_response_create_follows_cancelled_worker_ex
     session.create_response()
     wait(done)
 
-    assert engine.seen == [[("user", "new typed request")]]
+    assert len(engine.seen) == 1 and len(engine.seen[0]) == 1
+    role, content = engine.seen[0][0]
+    assert role == "user" and content.startswith("Now: ") and content.endswith("new typed request")
     assert session._queued_items == []
     created = [event["response"] for event in emitted if event["type"] == "response.created"]
     assert len(created) == 1
@@ -649,8 +652,11 @@ def test_context_lines_become_one_perception_item_before_the_user_text():
     session.create_response()
     wait(done)
     seen = engine.seen[0]
-    # the typed item was appended when it arrived; the context is drained when the turn runs
-    assert seen[0] == ("user", "hi")
+    # the typed item was appended when it arrived; the context is drained when the turn
+    # runs, and the clock (folded into the persisted user message) rides with "hi",
+    # the actual thing the user said, not the perception line.
+    role0, content0 = seen[0]
+    assert role0 == "user" and content0.startswith("Now: ") and content0.endswith("hi")
     assert seen[1] == ("user", "[perception] 18:42 matteo recognised (browser)\n[perception] 18:42 the scene changed (browser)")
     session.close()
 
@@ -665,7 +671,9 @@ def test_queued_context_alone_makes_response_create_run_a_turn():
     session.add_context("someone entered (browser)")
     session.create_response()
     wait(done)
-    assert engine.seen[1][-1] == ("user", "[perception] 18:42 someone entered (browser)")
+    role, content = engine.seen[1][-1]
+    assert role == "user" and content.startswith("Now: ")
+    assert content.endswith("[perception] 18:42 someone entered (browser)")
     assert "response.audio.delta" in [e["type"] for e in emitted]
     session.close()
 
@@ -677,7 +685,8 @@ def test_wake_runs_an_unsolicited_turn_with_the_context_and_the_silence_rule():
     assert session.wake() is True
     wait(done)
     role, content = engine.seen[0][-1]
-    assert role == "user" and content.startswith("[perception] 19:42 matteo recognised (browser)")
+    assert role == "user" and content.startswith("Now: ")
+    assert "[perception] 19:42 matteo recognised (browser)" in content
     assert "NOTHING_TO_SAY" in content  # the silence rule rides with the unsolicited item
     kinds = [e["type"] for e in emitted]
     assert "response.output_text.delta" in kinds and "response.audio.delta" in kinds

@@ -329,7 +329,7 @@ def _chat_sse_events(engine, messages, *, tz_name: str | None = None) -> Iterato
     Pure + synchronous so it's unit-testable; the async route runs it in a worker thread.
     """
     convo = _conversation_from_messages(messages)
-    convo.set_observation([{"type": "text", "text": now_line(local_now(tz_name))}])
+    convo.prefix_last_user(now_line(local_now(tz_name)))
     try:
         for delta in engine.respond_streaming(convo):
             if delta:

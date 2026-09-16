@@ -15,7 +15,7 @@ import time
 from collections import deque
 
 from richard import vision
-from richard.clock import local_now, now_line
+from richard.clock import local_now, now_line, strip_now_line
 from richard.conversation import Conversation, Message
 from richard.engine import ClientToolCall
 from richard.errors import BrainRejectedInput, BrainUnreachable
@@ -73,6 +73,10 @@ class RealtimeSession:
         self._context: list[str] = []
         self._context_lock = threading.Lock()
         self._attention_pending = False
+        # Set by _apply_item to the freshness of the most recently applied message-kind
+        # item; _respond consumes it once to decide whether that already-persisted user
+        # message still needs the clock folded in (see prefix_last_user in conversation.py).
+        self._pending_user_now = False
         self._unsolicited = False  # the next turn was started by wake(), not by the user
         self._input_generation = 0
         # A client tool may split one unsolicited turn across several responses. Bind
@@ -154,6 +158,7 @@ class RealtimeSession:
             content = item["content"]
             if fresh is None:
                 fresh = bool(Message(role="user", content=content).text().strip())
+            self._pending_user_now = fresh
             if fresh:
                 self._reset_unsolicited()
                 text = Message(role="user", content=content).text()
@@ -464,14 +469,13 @@ class RealtimeSession:
                 return
             language = transcript.language if isinstance(transcript, Transcription) else None
             transcript = transcript.text if isinstance(transcript, Transcription) else transcript
-            if transcript:
-                log.info("turn user: %r", transcript[:300])
             if not transcript:
                 return
             with self._state_lock:
                 if (token is not self._active_token or cancel.is_set()
                         or self._closed.is_set()):
                     return
+                log.info("turn user: %r", transcript[:300])
                 self._cue_language = language
                 if announce_transcript:
                     self._emit(events.transcription_completed(item_id, transcript))
@@ -542,7 +546,7 @@ class RealtimeSession:
             if turn_text is None:
                 history = self.conversation.history()
                 if history and history[-1].role == "user":
-                    turn_text = history[-1].text() or None
+                    turn_text = strip_now_line(history[-1].text()) or None
             self.conversation.seal_pending(NO_CLIENT_RESULT)
             input_generation = self._input_generation
             unsolicited = user_text is None and (
@@ -552,13 +556,27 @@ class RealtimeSession:
                 turn_text = None
             self._unsolicited = False
             self._unsolicited_continuation = None
+            # The clock rides inside a persisted user message, not a separate ephemeral
+            # slot (see prefix_last_user): a message the next turn's history replay
+            # omits would desync the served prefix from what was already cached.
+            pending_now = False if unsolicited else self._pending_user_now
+            self._pending_user_now = False
+            prefix = now_line(local_now(self._tz_name))
+            if pending_now:
+                # A typed/queued item already sits at the end of history (added by
+                # _apply_item before _respond ran); fold the clock into it directly,
+                # before anything else is appended after it.
+                self.conversation.prefix_last_user(prefix)
             context = self._drain_context()
             if context:
                 if unsolicited:
                     context += "\n" + UNSOLICITED_RULE
-                self.conversation.add_user(context)
+                stored_context = context
+                if user_text is None and not pending_now:
+                    stored_context = f"{prefix}\n{context}"
+                self.conversation.add_user(stored_context)
             if user_text is not None:
-                self.conversation.add_user(user_text)
+                self.conversation.add_user(f"{prefix}\n{user_text}")
             visual_turn = wants_frame(turn_text, unsolicited=unsolicited, context=context)
         if visual_turn:
             observed_source, observation = self._current_observation()
@@ -568,10 +586,7 @@ class RealtimeSession:
                 return
             if not self.visual_context or self.source_id != observed_source:
                 observation = None
-            parts = [{"type": "text", "text": now_line(local_now(self._tz_name))}]
-            if observation:
-                parts.extend(observation)
-            self.conversation.set_observation(parts)
+            self.conversation.set_observation(observation)
             if self._logical_turn_id is None:
                 self._logical_turn_id = events.new_id("turn")
             turn_id = self._logical_turn_id

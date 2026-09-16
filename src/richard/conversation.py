@@ -79,6 +79,37 @@ class Conversation:
     def add_user(self, content: str | list[dict]) -> None:
         self._history.append(Message(role="user", content=content))
 
+    def prefix_last_user(self, prefix: str) -> bool:
+        """Prepend `prefix` (and a newline) to the last message's text, in place, when it
+        is a user message that does not already carry it. Used to carry the clock inside
+        an already-persisted user message (see richard.clock) instead of a separate,
+        ephemeral slot that would desync a replayed tool-round prefix. Returns whether it
+        mutated anything."""
+        if not self._history or self._history[-1].role != "user":
+            return False
+        last = self._history[-1]
+        if isinstance(last.content, str):
+            if last.content.startswith(prefix):
+                return False
+            self._history[-1] = Message(
+                role="user", content=f"{prefix}\n{last.content}",
+                tool_calls=last.tool_calls, tool_call_id=last.tool_call_id,
+            )
+            return True
+        if isinstance(last.content, list):
+            parts = list(last.content)
+            for i, part in enumerate(parts):
+                if isinstance(part, dict) and part.get("type") == "text":
+                    if isinstance(part.get("text"), str) and part["text"].startswith(prefix):
+                        return False
+                    parts[i] = {**part, "text": f"{prefix}\n{part.get('text', '')}"}
+                    self._history[-1] = Message(role="user", content=parts)
+                    return True
+            parts.insert(0, {"type": "text", "text": prefix})
+            self._history[-1] = Message(role="user", content=parts)
+            return True
+        return False
+
     def add_assistant(self, content: str) -> None:
         self._history.append(Message(role="assistant", content=content))
 

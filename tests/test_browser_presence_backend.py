@@ -323,7 +323,7 @@ def test_session_replaces_or_clears_source_observation_without_persisting_it():
         session.close()
 
 
-def test_typed_turn_carries_a_now_line_not_persisted_to_history():
+def test_typed_turn_carries_a_now_line_inside_the_persisted_user_message():
     brain = ScriptBrain([{"deltas": ["Hi."]}])
     session, emitted = make_session(Engine(brain, [NoTools()], Personality()))
     try:
@@ -332,10 +332,41 @@ def test_typed_turn_carries_a_now_line_not_persisted_to_history():
         wait_until(lambda: any(e["type"] == "response.done" for e in emitted))
         last_message = brain.calls[0][-1]
         assert last_message["role"] == "user"
-        assert last_message["content"][0]["text"].startswith("Now: ")
+        assert last_message["content"].startswith("Now: ")
+        assert last_message["content"].endswith("hello")
+        history_user = [m for m in session.conversation.history() if m.role == "user"]
+        assert len(history_user) == 1
+        assert history_user[0].content == last_message["content"]
         assert not any(
             isinstance(message.content, list) for message in session.conversation.history()
         )
+    finally:
+        session.close()
+
+
+def test_tool_round_replays_byte_identical_prefix_on_the_next_turn():
+    """The Now: line lives inside the persisted user message (not a separate ephemeral
+    slot appended after history), so a turn that ends in a client tool call and a turn
+    that continues it serve the same prefix: the prompt cache does not miss mid-turn."""
+    brain = ScriptBrain([
+        {"tool_calls": [ToolCall(id="look", name="camera", arguments={})]},
+        {"deltas": ["A blue mug."]},
+    ])
+    session, emitted = make_session(Engine(brain, [NoTools()], Personality()))
+    try:
+        session.update({"tools": [CAMERA_SPEC]})
+        session.create_item({"kind": "message", "content": "what is this?"})
+        session.create_response()
+        wait_until(lambda: len([e for e in emitted if e["type"] == "response.done"]) == 1)
+        session.create_item({"kind": "function_call_output", "call_id": "look", "output": "image attached"})
+        session.create_item({"kind": "message", "content": [{"type": "image_url", "image_url": {"url": IMAGE}}]})
+        session.create_response()
+        wait_until(lambda: len([e for e in emitted if e["type"] == "response.done"]) == 2)
+
+        first_served = brain.calls[0]
+        second_served = brain.calls[1]
+        assert len(first_served) > 0
+        assert second_served[:len(first_served)] == first_served
     finally:
         session.close()
 
@@ -373,7 +404,7 @@ def test_blocked_old_tool_records_factual_result_before_new_input_and_cannot_emi
         history = [m.to_chat() for m in session.conversation.history()]
         assert [m["role"] for m in history[:4]] == ["user", "assistant", "tool", "user"]
         assert history[2]["tool_call_id"] == "old-tool" and history[2]["content"] == "switched"
-        assert history[3]["content"] == "new request"
+        assert history[3]["content"].startswith("Now: ") and history[3]["content"].endswith("new request")
         assert len(brain.calls) == 2
     finally:
         session.close()
@@ -402,9 +433,11 @@ def test_new_typed_turn_replaces_blocked_stt_without_recording_the_stale_transcr
         release.set()
         wait_until(lambda: any(e["type"] == "response.done" for e in emitted))
         assert engine.calls == 1
-        assert [message.content for message in session.conversation.history() if message.role == "user"] == [
-            "new typed request"
+        user_contents = [
+            message.content for message in session.conversation.history() if message.role == "user"
         ]
+        assert len(user_contents) == 1
+        assert user_contents[0].startswith("Now: ") and user_contents[0].endswith("new typed request")
     finally:
         session.close()
 
@@ -442,8 +475,8 @@ def test_playback_ack_defers_and_coalesces_attention_until_matching_drain():
         assert session.playback_update(response_id, False) is True
         wait_until(lambda: len([e for e in emitted if e["type"] == "response.done"]) == 2)
         assert engine.calls == 2
-        assert engine.seen[1][-1]["content"][0]["text"].startswith("Now: ")
-        context = engine.seen[1][-2]["content"]
+        context = engine.seen[1][-1]["content"]
+        assert context.startswith("Now: ")
         assert context.count("[perception]") == 8
         assert "changed 3 " not in context and "changed 4 " in context and "changed 11 " in context
     finally:
@@ -688,6 +721,8 @@ def test_session_prunes_old_images_after_a_completed_turn():
             if isinstance(m["content"], list) and any(p.get("type") == "image_url" for p in m["content"])
         ]
         assert len(image_messages) == 2
-        assert history[0]["content"] == [{"type": "text", "text": "look 1 [earlier picture no longer attached]"}]
+        stub_text = history[0]["content"][0]["text"]
+        assert stub_text.startswith("Now: ")
+        assert stub_text.endswith("look 1 [earlier picture no longer attached]")
     finally:
         session.close()

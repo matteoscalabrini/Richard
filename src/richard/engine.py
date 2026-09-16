@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 from richard.brain.completion import Completion
 from richard.brain.protocol import Brain
+from richard.clock import strip_now_line
 from richard.config import Personality
 from richard.conversation import Conversation, user_parts
 from richard.persona import build_system_prompt
@@ -88,7 +89,7 @@ def _latest_user_text(conversation: Conversation) -> str | None:
     # user's own words: skip them and keep walking for the latest thing the user said.
     for message in reversed(conversation.history()):
         if message.role == "user":
-            text = message.text()
+            text = strip_now_line(message.text())
             if text and not text.startswith("[perception]"):
                 return text
     return None
