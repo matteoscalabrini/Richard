@@ -25,6 +25,7 @@ from richard.realtime.chunker import ProgressiveChunker
 from richard.realtime.stt import Transcription
 from richard.realtime.timing import TurnTiming
 from richard.realtime.vad import FRAME_BYTES
+from richard.realtime.visual import wants_frame
 
 BRAIN_DOWN_LINE = "I can't reach my brain right now."
 TURN_FAILED_LINE = "Something went wrong on my end."
@@ -520,18 +521,29 @@ class RealtimeSession:
             if (token is not self._active_token or cancel.is_set()
                     or self._closed.is_set()):
                 return
-        observed_source, observation = self._current_observation()
+        observed_source, observation = None, None
         # A call the client never answered would leave a tool call without a result in
         # the served prefix; seal it so the model sees the failure instead of a broken prompt.
         with self._state_lock:
             if (token is not self._active_token or cancel.is_set()
                     or self._closed.is_set()):
                 return
+            # A typed ("message" kind) turn has already been appended to history by
+            # create_item before create_response runs the turn, so user_text here is
+            # None even though the turn carries text; recover it from the last user
+            # entry so wants_frame sees the words that started this turn either way.
+            turn_text = user_text
+            if turn_text is None:
+                history = self.conversation.history()
+                if history and history[-1].role == "user":
+                    turn_text = history[-1].text() or None
             self.conversation.seal_pending(NO_CLIENT_RESULT)
             input_generation = self._input_generation
             unsolicited = user_text is None and (
                 self._unsolicited or self._unsolicited_continuation == input_generation
             )
+            if unsolicited:
+                turn_text = None
             self._unsolicited = False
             self._unsolicited_continuation = None
             context = self._drain_context()
@@ -541,6 +553,13 @@ class RealtimeSession:
                 self.conversation.add_user(context)
             if user_text is not None:
                 self.conversation.add_user(user_text)
+            visual_turn = wants_frame(turn_text, unsolicited=unsolicited, context=context)
+        if visual_turn:
+            observed_source, observation = self._current_observation()
+        with self._state_lock:
+            if (token is not self._active_token or cancel.is_set()
+                    or self._closed.is_set()):
+                return
             if not self.visual_context or self.source_id != observed_source:
                 observation = None
             self.conversation.set_observation(observation)

@@ -251,6 +251,42 @@ def test_session_emits_error_activity_before_image_failure_fallback_audio():
         session.close()
 
 
+def test_session_attaches_the_ambient_frame_only_on_visual_turns():
+    shots = [
+        (b"jpeg", {"source": "browser-alpha", "age_s": 0.1, "width": 1, "height": 1}),
+        (b"jpeg", {"source": "browser-alpha", "age_s": 0.1, "width": 1, "height": 1}),
+    ]
+    brain = ScriptBrain([{"deltas": ["Ten past."]}, {"deltas": ["A cup."]}])
+    session, emitted = make_session(
+        Engine(brain, [NoTools()], Personality()),
+        observation=lambda source_id: shots.pop(0),
+    )
+    try:
+        session.update({"source_id": "browser-alpha", "visual_context": True})
+        session.create_item({"kind": "message", "content": "what time is it"})
+        session.create_response()
+        wait_until(lambda: len([e for e in emitted if e["type"] == "response.done"]) == 1)
+        session.create_item({"kind": "message", "content": "what am I holding"})
+        session.create_response()
+        wait_until(lambda: len([e for e in emitted if e["type"] == "response.done"]) == 2)
+
+        def has_image(messages):
+            return any(
+                isinstance(m.get("content"), list)
+                and any(p.get("type") == "image_url" for p in m["content"] if isinstance(p, dict))
+                for m in messages
+            )
+
+        assert not has_image(brain.calls[0])
+        assert has_image(brain.calls[1])
+        phases = [e["phase"] for e in emitted if e["type"] == "response.activity"]
+        assert phases[0] == "thinking"           # first turn: no vision cue
+        assert "vision" in phases[1:]            # second turn: a real look
+        assert len(shots) == 1                   # the frame was fetched once, not twice
+    finally:
+        session.close()
+
+
 def test_session_replaces_or_clears_source_observation_without_persisting_it():
     shots = [
         (b"jpeg", {"source": "browser-alpha", "age_s": 0.25, "width": 1, "height": 1}),
@@ -263,7 +299,7 @@ def test_session_replaces_or_clears_source_observation_without_persisting_it():
     )
     try:
         session.update({"source_id": "browser-alpha", "visual_context": True})
-        for index, text in enumerate(("hello", "again"), start=1):
+        for index, text in enumerate(("look at this", "look again"), start=1):
             session.create_item({"kind": "message", "content": text})
             session.create_response()
             wait_until(lambda: len([e for e in emitted if e["type"] == "response.done"]) == index)
