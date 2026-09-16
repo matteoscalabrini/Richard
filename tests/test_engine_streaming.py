@@ -235,14 +235,27 @@ def test_streaming_nudges_then_executes_and_streams_result():
 
 def test_streaming_nudge_sentinel_is_suppressed():
     brain = FakeBrain([
-        {"deltas": ["I'll leave that up to you."]},
+        {"deltas": ["I'll check the lights for you."]},
         {"deltas": ["NOTHING_TO_RUN"]},
     ])
     engine = Engine(brain, [FakeProvider()], Personality())
     convo = Conversation()
     convo.add_user("x")
-    assert "".join(engine.respond_streaming(convo)) == "I'll leave that up to you."
+    assert "".join(engine.respond_streaming(convo)) == "I'll check the lights for you."
     assert len(brain.calls) == 2
+
+
+def test_streaming_sentinel_with_trailing_prose_is_never_spoken():
+    brain = FakeBrain([
+        {"deltas": ["I'll check the fan for you."]},
+        {"deltas": ["NOTHING_TO_RUN", "\n\nBut I must correct that action check."]},
+    ])
+    engine = Engine(brain, [FakeProvider()], Personality())
+    convo = Conversation()
+    convo.add_user("is the fan on?")
+    out = "".join(engine.respond_streaming(convo))
+    assert out == "I'll check the fan for you."
+    assert "NOTHING_TO_RUN" not in out and "action check" not in out
 
 
 def test_streaming_nudge_round_plain_text_is_yielded_whole():

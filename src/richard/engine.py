@@ -26,19 +26,20 @@ NUDGE_PROMPT = (
     f"execute, reply exactly {NOTHING_TO_RUN}."
 )
 
-# First-person commitments and present-progressive device verbs. "Let me" counts only
-# when followed by something other than thinking or looking: "let me think", "let me
-# see", "let me take a look" and "one moment" are hesitations, and nudging them sent the
-# model looking for a tool to justify the phrase (review 2026-09-16). A false positive
-# costs one short extra completion answered by the sentinel; a false negative is the
-# status quo (the user repeats themselves), so the net is deliberately modest.
+# A promise is a first-person commitment followed, within three words, by a verb that
+# maps to a tool: "I'll turn the fan off", "let me check the lights". Bare "I'll" no
+# longer counts: on 2026-09-16 "I'll pretend to recognize" was nudged, the model replied
+# with the sentinel plus prose, and both were spoken. Hesitations ("let me think",
+# "one moment") never count. A false positive still costs one short extra completion.
+_TOOL_VERBS = (
+    r"turn|switch|set|dim|brighten|check|look|take a look|have a look|remember|forget|"
+    r"search|open|close|lock|unlock|start|stop|play|pause|pull|refresh|enrol|enroll|"
+    r"run|read|fetch|find|call|send|save|delete|remove"
+)
 _PROMISE_RE = re.compile(
-    r"(?i)\b(?:"
-    r"i['’]?ll|i will|i['’]?m going to|i am going to|"
-    r"let me(?!\s+(?:think|see|check|look|take a look|have a look|work))|"
-    r"right away|"
-    r"turning|switching|setting|dimming|starting|stopping|opening|closing|locking|unlocking"
-    r")\b"
+    r"(?i)\b(?:i['’]?ll|i will|let me|i['’]?m going to|i am going to)\s+"
+    r"(?:(?!think|see\b)\w+\s+){0,3}?(?:" + _TOOL_VERBS + r")\b"
+    r"|\b(?:turning|switching|setting|dimming|starting|stopping|opening|closing|locking|unlocking)\b"
 )
 
 
@@ -46,8 +47,19 @@ def _promises_action(text: str) -> bool:
     return bool(_PROMISE_RE.search(text or ""))
 
 
+def _split_sentinel(text: str) -> tuple[bool, str]:
+    """(True, "") when the reply starts with the sentinel, whatever follows it.
+
+    The model sometimes answers the nudge with the sentinel and then argues with the
+    nudge in prose; none of that is for the user."""
+    stripped = (text or "").lstrip()
+    if stripped.upper().startswith(NOTHING_TO_RUN):
+        return True, ""
+    return False, text or ""
+
+
 def _is_nothing_to_run(text: str) -> bool:
-    return (text or "").strip().rstrip(".").strip().upper() == NOTHING_TO_RUN
+    return _split_sentinel(text)[0]
 
 
 def _has_image(content) -> bool:

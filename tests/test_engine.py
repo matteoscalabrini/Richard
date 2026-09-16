@@ -156,19 +156,32 @@ def test_respond_handles_content_alongside_tool_calls():
 def test_promises_action_heuristic():
     from richard.engine import _promises_action
 
+    # a first-person commitment followed by a tool-shaped verb
     assert _promises_action("I'll turn the fan off.")
     assert _promises_action("Turning it off now.")
     assert _promises_action("Let me dim the lights.")
+    assert _promises_action("Let me check the lights for you.")
+    assert _promises_action("I'll remember that.")
+    assert _promises_action("I'm going to look it up.")
+    # statements, hesitations and idioms are not promises
     assert not _promises_action("The fan is off.")
     assert not _promises_action("Done — lamp's off, confirmed at 40%.")
-    # Hesitation and looking are not device actions; nudging them pushed the model
-    # into camera calls (review 2026-09-16).
     assert not _promises_action("Mm, let me think.")
     assert not _promises_action("Let me see.")
-    assert not _promises_action("Let me take a look.")
-    assert not _promises_action("Let me work that out.")
     assert not _promises_action("One moment.")
-    assert not _promises_action("Let me check the image.")
+    assert not _promises_action("you're testing how many languages I'll pretend to recognize")
+    assert not _promises_action("I'll leave that decision to you.")
+    assert not _promises_action("I will be honest with you.")
+
+
+def test_split_sentinel_tolerates_trailing_prose():
+    from richard.engine import _split_sentinel
+
+    assert _split_sentinel("NOTHING_TO_RUN") == (True, "")
+    assert _split_sentinel("NOTHING_TO_RUN.") == (True, "")
+    assert _split_sentinel("NOTHING_TO_RUN\n\nBut I have to correct that action check.") == (True, "")
+    assert _split_sentinel("Fine.") == (False, "Fine.")
+    assert _split_sentinel("") == (False, "")
 
 
 def test_respond_nudges_promise_without_tool_call_and_executes():
@@ -196,13 +209,24 @@ def test_respond_nudges_promise_without_tool_call_and_executes():
 def test_respond_nudge_sentinel_keeps_original_reply():
     brain = FakeBrain(
         [
-            Completion(content="I'll leave that decision to you.", tool_calls=[]),
+            Completion(content="I'll check the lights for you.", tool_calls=[]),
             Completion(content="NOTHING_TO_RUN", tool_calls=[]),
         ]
     )
     engine, store = _engine(brain)
-    assert engine.respond(Conversation()) == "I'll leave that decision to you."
+    assert engine.respond(Conversation()) == "I'll check the lights for you."
     assert store.all() == []
+
+
+def test_respond_sentinel_with_trailing_prose_keeps_original_reply():
+    brain = FakeBrain(
+        [
+            Completion(content="I'll check the lights for you.", tool_calls=[]),
+            Completion(content="NOTHING_TO_RUN\n\nBut I must correct that action check.", tool_calls=[]),
+        ]
+    )
+    engine, store = _engine(brain)
+    assert engine.respond(Conversation()) == "I'll check the lights for you."
 
 
 def test_respond_plain_answer_is_not_nudged():
@@ -227,19 +251,19 @@ def test_respond_does_not_nudge_after_a_real_tool_call():
 def test_respond_nudges_at_most_once():
     brain = FakeBrain(
         [
-            Completion(content="I'll do it.", tool_calls=[]),
-            Completion(content="I'll do it right away.", tool_calls=[]),
+            Completion(content="I'll check the lights for you.", tool_calls=[]),
+            Completion(content="I'll check the lights for you, right away.", tool_calls=[]),
         ]
     )
     engine, _ = _engine(brain)
-    assert engine.respond(Conversation()) == "I'll do it right away."
+    assert engine.respond(Conversation()) == "I'll check the lights for you, right away."
     assert len(brain.calls) == 2
 
 
 def test_respond_does_not_nudge_without_tools():
-    brain = FakeBrain([Completion(content="I'll get to it.", tool_calls=[])])
+    brain = FakeBrain([Completion(content="I'll check the lights for you.", tool_calls=[])])
     engine = Engine(brain, [], Personality())
-    assert engine.respond(Conversation()) == "I'll get to it."
+    assert engine.respond(Conversation()) == "I'll check the lights for you."
     assert len(brain.calls) == 1
 
 
