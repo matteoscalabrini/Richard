@@ -78,3 +78,14 @@ def test_prompt_ends_with_static_perception_rules():
     # custom prompts get the same contract
     custom = build_system_prompt(Personality(system_prompt="You are {name}."))
     assert custom.endswith(PERCEPTION_RULES)
+
+
+def test_persona_does_not_tell_richard_to_look_around():
+    from richard.persona import BASE_CHARACTER, PERCEPTION_RULES
+
+    assert "look more closely" not in BASE_CHARACTER
+    assert "curiosity" not in BASE_CHARACTER
+    # Three sentences, no repetition of the "describe" rule.
+    sentences = [s for s in PERCEPTION_RULES.split(". ") if s.strip()]
+    assert len(sentences) == 3
+    assert PERCEPTION_RULES.count("describe") == 1

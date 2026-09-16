@@ -3,8 +3,7 @@ from __future__ import annotations
 
 from richard.plugins.base import PluginContext, PluginParts
 
-CONTEXT = ("Ambient perception is on: you are told when someone arrives, leaves or is recognised, "
-           "and you can look at the live camera with the camera tool.")
+CONTEXT = "Ambient perception is on: you are told when someone arrives, leaves or is recognised."
 
 
 def _default_detector(settings, write):

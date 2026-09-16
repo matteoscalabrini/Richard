@@ -883,3 +883,10 @@ def test_create_response_logs_its_own_timing_without_stt(caplog):
         assert "stt=" not in lines[0]
     finally:
         session.close()
+
+
+def test_unsolicited_rule_scopes_curiosity_to_unprompted_turns():
+    from richard.realtime.session import UNSOLICITED_RULE
+
+    assert "genuinely interests you" in UNSOLICITED_RULE
+    assert "NOTHING_TO_SAY" in UNSOLICITED_RULE

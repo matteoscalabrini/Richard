@@ -75,3 +75,10 @@ def test_registry_exposes_a_built_plugin_instance(tmp_path):
     assert registry.plugin("nope") is None
     registry.build(["perception"], {}, persona_name="R", data_dir=tmp_path, write=lambda s: None)
     registry.shutdown()
+
+
+def test_perception_context_line_does_not_advertise_the_camera():
+    from richard.plugins.perception import CONTEXT
+
+    assert "camera" not in CONTEXT.lower()
+    assert "arrives" in CONTEXT

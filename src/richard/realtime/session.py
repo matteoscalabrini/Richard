@@ -36,10 +36,10 @@ NO_CLIENT_RESULT = "no result from client"
 NOTHING_TO_SAY = "NOTHING_TO_SAY"
 UNSOLICITED_RULE = (
     "Nobody addressed you; this is something you noticed. Consider it alongside the available "
-    "conversation and memories. You may look more closely with an available tool, make an "
-    "observation, ask a relevant question, or pick up a shared topic. Speaking is optional; "
-    "avoid repeated greetings or questions. If speaking now would be unwelcome or you have "
-    f"nothing worth saying, reply exactly {NOTHING_TO_SAY}."
+    "conversation and memories. If something genuinely interests you, you may look more closely "
+    "with an available tool, make an observation, ask a relevant question, or pick up a shared "
+    "topic. Speaking is optional; avoid repeated greetings or questions. If speaking now would be "
+    f"unwelcome or you have nothing worth saying, reply exactly {NOTHING_TO_SAY}."
 )
 
 log = logging.getLogger("richard.realtime")
