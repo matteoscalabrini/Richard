@@ -55,6 +55,10 @@ class Gate:
         self._clock = clock
         self._wall = wall
         self._last: dict[tuple[str, str], float] = {}
+        # The last "identified" subject let through per source. A→B→A within the
+        # cooldown must still correct Richard: once the identity actually changes it is
+        # never "the same repeat" the cooldown exists to suppress.
+        self._last_identified: dict[str, str] = {}
         self.reasons: list[tuple[str, str]] = []
 
     def admit(self, events: list[PerceptionEvent]) -> list[PerceptionEvent]:
@@ -70,10 +74,17 @@ class Gate:
                 self.reasons.append((event.kind, "quiet_hours"))
                 continue
             key = (event.kind, event.subject)
-            last = self._last.get(key)
-            if last is not None and now - last < self.policy.cooldown_s:
-                self.reasons.append((event.kind, "cooldown"))
-                continue
+            changed_identity = (
+                event.kind == "identified"
+                and self._last_identified.get(event.source_id) != event.subject
+            )
+            if not changed_identity:
+                last = self._last.get(key)
+                if last is not None and now - last < self.policy.cooldown_s:
+                    self.reasons.append((event.kind, "cooldown"))
+                    continue
             self._last[key] = now
+            if event.kind == "identified":
+                self._last_identified[event.source_id] = event.subject
             admitted.append(event)
         return admitted

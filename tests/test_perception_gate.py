@@ -53,6 +53,23 @@ def test_cooldown_per_kind_and_subject():
     assert gate.admit([ev("identified", "matteo")]) == [ev("identified", "matteo")]
 
 
+def test_identified_flip_always_passes_even_within_cooldown():
+    """A->B->A within the cooldown window must still correct Richard: the second
+    `identified A` is a changed recognition, not a repeat of the first."""
+    clock = Clock(0.0)
+    gate = Gate(GatePolicy(cooldown_s=120.0), clock=clock, wall=lambda: datetime(2026, 9, 9, 12, 0))
+    assert gate.admit([ev("identified", "matteo")]) == [ev("identified", "matteo")]
+    clock.t = 30.0
+    assert gate.admit([ev("identified", "guest")]) == [ev("identified", "guest")]
+    clock.t = 45.0  # well within the 120s cooldown for identified/matteo
+    assert gate.admit([ev("identified", "matteo")]) == [ev("identified", "matteo")]
+    assert gate.reasons == []
+    # a same-subject repeat right after the flip is still rate-limited
+    clock.t = 46.0
+    assert gate.admit([ev("identified", "matteo")]) == []
+    assert gate.reasons == [("identified", "cooldown")]
+
+
 def test_quiet_hours_drop_everything_but_still_update_nothing():
     gate = Gate(GatePolicy(quiet_hours="23:00-07:30"), wall=lambda: datetime(2026, 9, 9, 2, 0))
     assert gate.admit([ev("person_entered"), ev("scene_changed")]) == []
