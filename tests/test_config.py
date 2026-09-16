@@ -89,6 +89,16 @@ def test_llm_timeout_env_override(tmp_path, monkeypatch):
     assert load_config(path).llm_timeout == 30.0
 
 
+def test_timezone_default_is_empty():
+    assert Config().timezone == ""
+
+
+def test_timezone_roundtrip(tmp_path):
+    path = tmp_path / "config.toml"
+    save_config(Config(timezone="Europe/Rome"), path)
+    assert load_config(path).timezone == "Europe/Rome"
+
+
 def test_home_assistant_view_defaults():
     config = Config()
     assert config.home_assistant.enabled is False

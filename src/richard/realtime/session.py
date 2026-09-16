@@ -15,6 +15,7 @@ import time
 from collections import deque
 
 from richard import vision
+from richard.clock import local_now, now_line
 from richard.conversation import Conversation, Message
 from richard.engine import ClientToolCall
 from richard.errors import BrainRejectedInput, BrainUnreachable
@@ -49,7 +50,7 @@ class RealtimeSession:
     def __init__(self, *, engine, transcriber, tts, detector, emit,
                  partial_every: int = 25, barge_in: str = "vad",
                  registry=None, clock_hm=lambda: time.strftime("%H:%M"),
-                 observation=None, source_change=None, cue_voice=None) -> None:
+                 observation=None, source_change=None, cue_voice=None, tz_name=None) -> None:
         self._engine = engine
         self._transcriber = transcriber
         self._tts = tts
@@ -64,6 +65,7 @@ class RealtimeSession:
         self._observation = observation
         self._source_change = source_change
         self._cue_voice = cue_voice
+        self._tz_name = tz_name
         self._cue_language = None
         self.source_id: str | None = None
         self.playback_ack = False
@@ -566,7 +568,10 @@ class RealtimeSession:
                 return
             if not self.visual_context or self.source_id != observed_source:
                 observation = None
-            self.conversation.set_observation(observation)
+            parts = [{"type": "text", "text": now_line(local_now(self._tz_name))}]
+            if observation:
+                parts.extend(observation)
+            self.conversation.set_observation(parts)
             if self._logical_turn_id is None:
                 self._logical_turn_id = events.new_id("turn")
             turn_id = self._logical_turn_id

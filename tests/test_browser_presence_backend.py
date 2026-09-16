@@ -304,16 +304,38 @@ def test_session_replaces_or_clears_source_observation_without_persisting_it():
             session.create_response()
             wait_until(lambda: len([e for e in emitted if e["type"] == "response.done"]) == index)
         first_observation = brain.calls[0][-1]["content"]
-        assert first_observation[0]["type"] == "text" and "0.25 seconds" in first_observation[0]["text"]
-        assert "active conversation or action" in first_observation[0]["text"]
-        assert "unless the user requested a description" in first_observation[0]["text"]
-        assert first_observation[1]["image_url"]["url"].startswith("data:image/jpeg;base64,")
+        visual_text = next(
+            p["text"] for p in first_observation
+            if p.get("type") == "text" and "visual observation" in p.get("text", "")
+        )
+        assert "0.25 seconds" in visual_text
+        assert "active conversation or action" in visual_text
+        assert "unless the user requested a description" in visual_text
+        image_part = next(p for p in first_observation if p.get("type") == "image_url")
+        assert image_part["image_url"]["url"].startswith("data:image/jpeg;base64,")
         assert all(
             not any(part.get("type") == "image_url" for part in (message.get("content") or []) if isinstance(part, dict))
             for message in brain.calls[1]
             if isinstance(message.get("content"), list)
         )
         assert all(not isinstance(message.content, list) for message in session.conversation.history())
+    finally:
+        session.close()
+
+
+def test_typed_turn_carries_a_now_line_not_persisted_to_history():
+    brain = ScriptBrain([{"deltas": ["Hi."]}])
+    session, emitted = make_session(Engine(brain, [NoTools()], Personality()))
+    try:
+        session.create_item({"kind": "message", "content": "hello"})
+        session.create_response()
+        wait_until(lambda: any(e["type"] == "response.done" for e in emitted))
+        last_message = brain.calls[0][-1]
+        assert last_message["role"] == "user"
+        assert last_message["content"][0]["text"].startswith("Now: ")
+        assert not any(
+            isinstance(message.content, list) for message in session.conversation.history()
+        )
     finally:
         session.close()
 
@@ -420,7 +442,8 @@ def test_playback_ack_defers_and_coalesces_attention_until_matching_drain():
         assert session.playback_update(response_id, False) is True
         wait_until(lambda: len([e for e in emitted if e["type"] == "response.done"]) == 2)
         assert engine.calls == 2
-        context = engine.seen[1][-1]["content"]
+        assert engine.seen[1][-1]["content"][0]["text"].startswith("Now: ")
+        context = engine.seen[1][-2]["content"]
         assert context.count("[perception]") == 8
         assert "changed 3 " not in context and "changed 4 " in context and "changed 11 " in context
     finally:

@@ -352,7 +352,7 @@ def _run_chat() -> int:
         registry = _build_plugins(config)
         control_store, control_reader, control_provider = _build_control_loops(registry)
         providers = _engine_providers(
-            memory_provider=MemoryProvider(store),
+            memory_provider=MemoryProvider(store, tz_name=config.timezone or None),
             plugin_providers=[*registry.providers(), ContextLinesProvider(registry.context_lines())],
             control_provider=control_provider,
             diagnostics=_build_diagnostics(registry),
@@ -502,6 +502,7 @@ def _realtime_session_factory(config, *, brain, providers_fn, synth, transcriber
             detector=detector, emit=emit, registry=registry,
             observation=observation, source_change=bind_source,
             cue_voice=cue_fingerprint(config, "en"),
+            tz_name=config.timezone or None,
         )
 
     return factory
@@ -621,7 +622,7 @@ def _run_voice(write: Callable[[str], None] = print) -> int:
         registry = _build_plugins(config, write)
         control_store, control_reader, control_provider = _build_control_loops(registry)
         providers = _engine_providers(
-            memory_provider=MemoryProvider(store),
+            memory_provider=MemoryProvider(store, tz_name=config.timezone or None),
             plugin_providers=[*registry.providers(), ContextLinesProvider(registry.context_lines())],
             control_provider=control_provider,
             diagnostics=_build_diagnostics(registry),
@@ -722,7 +723,7 @@ def _run_serve(write: Callable[[str], None] = print) -> int:
     stt = _build_stt(config)
     synth = _build_tts(config, write)
     memory_store = MemoryStore(default_memory_path())
-    memory_provider = MemoryProvider(memory_store)
+    memory_provider = MemoryProvider(memory_store, tz_name=config.timezone or None)
     relays = RelayRegistry()
     registry = _build_plugins(config, write)
 
@@ -801,6 +802,7 @@ def _run_serve(write: Callable[[str], None] = print) -> int:
             voice_turn=voice_turn,
             perception=lambda: _perception_service_of(registry),
             cue_can_prepare=lambda: not session_registry.active(),
+            tz_name=config.timezone or None,
         )
 
     def _control_engine():

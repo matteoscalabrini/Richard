@@ -172,6 +172,7 @@ class Config:
     llm_api_key: str | None = None
     llm_timeout: float = 180.0
     llm_extra_body: dict = field(default_factory=dict)  # [llm_extra_body] table
+    timezone: str = ""  # IANA name (e.g. "Europe/Rome"); "" uses the system's local zone
     personality: Personality = field(default_factory=Personality)
     voice: Voice = field(default_factory=Voice)
     satellite: Satellite = field(default_factory=Satellite)
@@ -326,6 +327,7 @@ def load_config(path: Path | None = None) -> Config:
         llm_api_key=data.get("llm_api_key", Config.llm_api_key),
         llm_timeout=float(data.get("llm_timeout", Config.llm_timeout)),
         llm_extra_body=dict(data.get("llm_extra_body") or {}),
+        timezone=data.get("timezone", Config.timezone),
         personality=personality,
         voice=voice,
         satellite=satellite,
@@ -379,6 +381,8 @@ def save_config(config: Config, path: Path | None = None) -> None:
         data["llm_api_key"] = config.llm_api_key
     if config.llm_extra_body:
         data["llm_extra_body"] = config.llm_extra_body
+    if config.timezone:
+        data["timezone"] = config.timezone
     data["personality"] = {
         "name": config.personality.name,
         "humour": config.personality.humour,

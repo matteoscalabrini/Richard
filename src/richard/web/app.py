@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Callable
 
 from richard import __version__, vision
+from richard.clock import local_now, now_line
 from richard.config import (
     Config,
     apply_home_assistant_url,
@@ -317,12 +318,13 @@ def _voice_turn(transcribe, engine, synth, messages, audio_bytes) -> dict:
     return {"transcript": transcript, "reply": reply, "audio": audio}
 
 
-def _chat_sse_events(engine, messages) -> Iterator[str]:
+def _chat_sse_events(engine, messages, *, tz_name: str | None = None) -> Iterator[str]:
     """Drive the engine and emit Server-Sent Events: one per delta, then a done event.
 
     Pure + synchronous so it's unit-testable; the async route runs it in a worker thread.
     """
     convo = _conversation_from_messages(messages)
+    convo.set_observation([{"type": "text", "text": now_line(local_now(tz_name))}])
     try:
         for delta in engine.respond_streaming(convo):
             if delta:
@@ -517,6 +519,7 @@ class WebApp:
         plugin_records: Callable[[], list] | None = None,
         perception: Callable[[], object] | None = None,
         cue_can_prepare: Callable[[], bool] = lambda: True,
+        tz_name: str | None = None,
     ) -> None:
         self._config_path = config_path
         self._memory = memory_store
@@ -532,6 +535,7 @@ class WebApp:
         self._voice_library_factory = voice_library_factory
         self._plugin_records = plugin_records
         self._perception = perception  # getter: the service exists only when the plugin is enabled
+        self._tz_name = tz_name
         self._cue_preparation = CuePreparation(
             Path(config_path).parent / "realtime-cues", can_prepare=cue_can_prepare,
         )
@@ -1249,7 +1253,7 @@ async def _serve_chat(app: WebApp, body: bytes, writer) -> None:
 
     def worker() -> None:
         try:
-            for chunk in _chat_sse_events(engine, messages):
+            for chunk in _chat_sse_events(engine, messages, tz_name=app._tz_name):
                 loop.call_soon_threadsafe(queue.put_nowait, chunk)
         except Exception as exc:  # never let a brain error kill the thread silently
             loop.call_soon_threadsafe(queue.put_nowait, _sse({"error": str(exc)}))

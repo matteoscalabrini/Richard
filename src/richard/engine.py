@@ -293,9 +293,9 @@ class Engine:
         nudged = False
         hold = False  # buffer the nudge round so a sentinel reply is never spoken
         turn_text = ""
-        next_phase = "vision" if conversation.observation is not None or (
-            conversation.history()
-            and _has_image(conversation.history()[-1].content)
+        next_phase = "vision" if (
+            (conversation.observation is not None and _has_image(conversation.observation.content))
+            or (conversation.history() and _has_image(conversation.history()[-1].content))
         ) else "thinking"
         try:
             for _ in range(self._max_rounds):
