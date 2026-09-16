@@ -42,7 +42,6 @@ _PROMISE_RE = re.compile(
 )
 
 
-
 def _promises_action(text: str) -> bool:
     return bool(_PROMISE_RE.search(text or ""))
 
@@ -71,12 +70,14 @@ def _served_schemas(provider, user_text: str | None) -> list[dict]:
 
 
 def _latest_user_text(conversation: Conversation) -> str | None:
+    # Perception context lines ("[perception] 10:02 matteo recognised (browser)") are
+    # stored as user messages by RealtimeSession.add_context, but they are not the
+    # user's own words: skip them and keep walking for the latest thing the user said.
     for message in reversed(conversation.history()):
         if message.role == "user":
             text = message.text()
-            if text:
+            if text and not text.startswith("[perception]"):
                 return text
-            continue
     return None
 
 

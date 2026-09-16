@@ -56,10 +56,17 @@ FORGET_SCHEMA = {"type": "function", "function": {
 
 # Face and recognition talk, English and Italian: only then are the face tools offered.
 # Serving them on every turn made five of the tool list camera-shaped (review 2026-09-16).
+# Narrowed 2026-09-16 (review): bare "face"/"faccia"/"ultima volta" fired on perception
+# context lines and on ordinary speech ("faccia pure" is the subjunctive of fare, "let's
+# face it" and "l'ultima volta che..." have nothing to do with the camera). Each
+# alternative below needs a face-noun with an article/possessive, or a fixed idiom.
 _FACE_TOPIC_RE = re.compile(
-    r"(?i)\b(?:face|faces|recogni[sz]e|recogni[sz]ed|enrol|enroll|last (?:saw|seen|see)|"
-    r"last time you saw|faccia|viso|riconosc\w*|ricordati (?:di|la) me|"
-    r"l'ultima volta|ultima volta)\b"
+    r"(?i)\b(?:my|your|his|her|their) face\b|\bfaces?\b(?= of)|\bface recognition\b|"
+    r"\brecogni[sz]e\b|\benrol\b|\benroll\b|\blast (?:saw|seen|see)\b|"
+    r"\bremember me\b|\bdo you know me\b|\bmi riconosci\b|\briconoscimi\b|\bricordati di me\b|"
+    r"(?:la |mia |sua |tua |il |mio |suo |tuo )(?:faccia|viso|volto)|"
+    r"(?:quando|when)[^.?!]{0,40}\b(?:visto|vista|seen|saw)\b|"
+    r"\bdimentica\b|\bforget me\b|\bforget [A-Z]\w+"
 )
 
 

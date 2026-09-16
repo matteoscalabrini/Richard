@@ -120,7 +120,18 @@ def test_presence_provider_serves_face_tools_only_when_faces_are_the_topic():
     ]
     assert provider.conditional_schemas("what time is it") == []
     assert provider.conditional_schemas(None) == []
-    for text in ("remember my face, I'm Matteo", "forget Anna's face", "when did you last see Luca",
-                 "ricordati la mia faccia", "quando hai visto Anna l'ultima volta", "riconoscimi"):
+    for text in (
+        "[perception] 10:02 matteo recognised (browser)",
+        "faccia pure",
+        "che faccia bel tempo",
+        "l'ultima volta che ho mangiato pizza",
+        "let's face it, it's late",
+    ):
+        assert provider.conditional_schemas(text) == [], text
+    for text in (
+        "remember my face, I'm Matteo", "forget Anna's face", "when did you last see Luca",
+        "ricordati la mia faccia", "quando hai visto Anna l'ultima volta", "riconoscimi",
+        "remember me", "mi riconosci?", "dimentica Anna", "forget Anna",
+    ):
         names = [s["function"]["name"] for s in provider.conditional_schemas(text)]
         assert names == ["last_seen", "enrol_face", "forget_face"], text

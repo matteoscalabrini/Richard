@@ -472,3 +472,17 @@ def test_conditional_tools_still_served_when_last_user_message_is_image_only():
     convo.add_user([{"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,AAAA"}}])
     assert "".join(engine.respond_streaming(convo)) == "Enrolled."
     assert [t["function"]["name"] for t in brain.tools[0]] == ["who_is_here", "enrol_face"]
+
+
+def test_conditional_tools_ignore_perception_context_lines():
+    # RealtimeSession.add_context stores perception wake lines ("[perception] 10:02
+    # matteo recognised (browser)") as user messages. They are not the user's own
+    # words and must not flip the face tools on for every recognition wake.
+    provider = FaceProvider()
+    brain = FakeBrain([{"deltas": ["It's noon."]}])
+    engine = Engine(brain, [provider], Personality())
+    convo = Conversation()
+    convo.add_user("what time is it")
+    convo.add_user("[perception] 10:02 matteo recognised (browser)")
+    assert "".join(engine.respond_streaming(convo)) == "It's noon."
+    assert [t["function"]["name"] for t in brain.tools[0]] == ["who_is_here"]
