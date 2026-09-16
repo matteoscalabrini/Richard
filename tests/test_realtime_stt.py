@@ -79,6 +79,8 @@ def test_auto_language_is_restricted_to_allowed_set():
 
 
 def test_hallucinated_segments_are_dropped():
+    # Only no_speech_prob > 0.6 drops a segment now — a low avg_logprob alone
+    # (e.g. a quiet or mumbled but real utterance) is kept, just logged.
     segs = [
         FakeSegment("İzlediğiniz için teşekkür ederim.", no_speech_prob=0.9, avg_logprob=-0.4),
         FakeSegment("come va", no_speech_prob=0.1, avg_logprob=-0.3),
@@ -86,7 +88,7 @@ def test_hallucinated_segments_are_dropped():
     ]
     model = FakeModel(segs)
     t = TurnTranscriber("base", language="it", _model=model)
-    assert t.final(b"\x00" * 3200) == "come va"
+    assert t.final(b"\x00" * 3200) == "come vagarbage"
 
 
 def test_partial_does_not_call_detect_language():

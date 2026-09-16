@@ -9,10 +9,13 @@ buffer each pass is simpler and fast enough (spec's chosen approach).
 """
 from __future__ import annotations
 
+import logging
 import threading
 from dataclasses import dataclass
 
 import numpy as np
+
+logger = logging.getLogger("richard.realtime")
 
 
 @dataclass(frozen=True)
@@ -86,11 +89,16 @@ class TurnTranscriber:
                 vad_filter=False,  # endpointing already ran Silero; don't double-gate
                 condition_on_previous_text=False,
             )
-            kept = [
-                s for s in segments
-                if getattr(s, "no_speech_prob", 0.0) <= 0.6
-                and getattr(s, "avg_logprob", 0.0) >= -1.0
-            ]
+            kept = []
+            for s in segments:
+                if getattr(s, "no_speech_prob", 0.0) > 0.6:
+                    continue
+                avg_logprob = getattr(s, "avg_logprob", 0.0)
+                if avg_logprob < -1.0:
+                    logger.debug(
+                        "stt: low avg_logprob=%.2f kept, text_len=%d", avg_logprob, len(s.text)
+                    )
+                kept.append(s)
             language = getattr(info, "language", None) or language
             if detect:
                 self._last_language = language
