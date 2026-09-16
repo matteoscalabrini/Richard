@@ -154,6 +154,8 @@ class RealtimeSession:
                 fresh = bool(Message(role="user", content=content).text().strip())
             if fresh:
                 self._reset_unsolicited()
+                text = Message(role="user", content=content).text()
+                log.info("turn user: %r", text[:300])
             self.conversation.add_user(content)
             urls = vision.image_urls(content)
             if urls:
@@ -460,6 +462,8 @@ class RealtimeSession:
                 return
             language = transcript.language if isinstance(transcript, Transcription) else None
             transcript = transcript.text if isinstance(transcript, Transcription) else transcript
+            if transcript:
+                log.info("turn user: %r", transcript[:300])
             if not transcript:
                 return
             with self._state_lock:
@@ -686,11 +690,14 @@ class RealtimeSession:
             with self._state_lock:
                 if token is self._active_token and not cancel.is_set():
                     self.conversation.add_assistant(full)
+                    log.info("turn reply: %r", full[:300])
                     pruned = self.conversation.prune_images(keep=2)
                     if pruned:
                         log.info("pruned %d older image(s) from history", pruned)
         if status == "cancelled":
             self.conversation.seal_pending("tool was not run because response was cancelled")
+            if full:
+                log.info("turn reply (cancelled): %r", full[:300])
             self._emit(events.item_truncated(response_id))
         if (unsolicited and handed_to_client and status == "completed"
                 and not cancel.is_set() and owned):

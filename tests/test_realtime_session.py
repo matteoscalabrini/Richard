@@ -885,6 +885,21 @@ def test_create_response_logs_its_own_timing_without_stt(caplog):
         session.close()
 
 
+def test_turn_logs_user_text_and_reply(caplog):
+    import logging
+
+    session, emitted, done = collect_session()
+    try:
+        with caplog.at_level(logging.INFO, logger="richard.realtime"):
+            session.feed_audio(FRAME * 2)
+            wait(done)
+        msgs = [r.getMessage() for r in caplog.records]
+        assert any(m == "turn user: 'turn the fan on'" for m in msgs)
+        assert any(m == "turn reply: 'Sure thing, the fan is on now.'" for m in msgs)
+    finally:
+        session.close()
+
+
 def test_unsolicited_rule_scopes_curiosity_to_unprompted_turns():
     from richard.realtime.session import UNSOLICITED_RULE
 
