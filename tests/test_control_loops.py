@@ -151,6 +151,15 @@ def test_monitor_suppresses_inbox_item_when_llm_says_trigger_did_not_match():
     assert store.notifications() == []
 
 
+def test_last_notification_id():
+    store = ControlLoopStore(":memory:")
+    assert store.last_notification_id() == 0
+    n1 = store.add_notification(loop_id=None, loop_name="loop1", summary="s1", response="r1")
+    assert store.last_notification_id() == n1.id
+    n2 = store.add_notification(loop_id=None, loop_name="loop2", summary="s2", response="r2")
+    assert store.last_notification_id() == n2.id > n1.id
+
+
 def test_describe_changes_reports_state_and_attribute_deltas():
     before = {"ha:light.one": {"name": "Lamp", "state": "off", "attributes": {"brightness": 0}}}
     after = {"ha:light.one": {"name": "Lamp", "state": "on", "attributes": {"brightness": 100}}}

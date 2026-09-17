@@ -115,6 +115,16 @@ def test_presence_log_round_trip(tmp_path):
     log.close()
 
 
+def test_presence_log_last_id(tmp_path):
+    log = PresenceLog(tmp_path / "perception.db")
+    assert log.last_id() == 0
+    log.append(PerceptionEvent(1.0, "browser", "person_entered", "unknown"))
+    assert log.last_id() == 1
+    log.append(PerceptionEvent(2.0, "browser", "identified", "matteo", 0.9))
+    assert log.last_id() == 2
+    log.close()
+
+
 def test_unknown_person_is_never_reported_when_identity_is_off():
     state = PresenceState("browser", enter_debounce_s=0.0, unknown_after_s=5.0, report_unknown=False)
     state.observe(0.0, [BOX], [None])

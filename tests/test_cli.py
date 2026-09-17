@@ -403,6 +403,160 @@ def test_realtime_session_factory_builds_wired_session():
         session.close()
 
 
+def test_realtime_session_factory_wires_catchup_on_close_and_attach():
+    from richard.cli import _realtime_session_factory
+    from richard.config import Config
+
+    config = Config()
+    config.voice.endpoint_silence_ms = 320
+
+    class NullTTS:
+        samplerate = 24000
+
+        def synth(self, text):
+            return b""
+
+    class NullTranscriber:
+        def partial(self, pcm):
+            return ""
+
+        def final(self, pcm):
+            return ""
+
+    class ScriptedVAD:
+        def is_speech(self, frame, samplerate=16000):
+            return False
+
+        def reset(self):
+            pass
+
+    class FakeCatchUp:
+        def __init__(self):
+            self.attached = None
+
+        def mark_ended(self):
+            pass
+
+        def attach(self, session):
+            self.attached = session
+
+    catchup = FakeCatchUp()
+    factory = _realtime_session_factory(
+        config,
+        brain=object(),
+        providers_fn=lambda: [],
+        synth=NullTTS(),
+        transcriber=NullTranscriber(),
+        vad_factory=ScriptedVAD,
+        catchup=catchup,
+    )
+    emitted = []
+    session = factory(emitted.append)
+    try:
+        assert catchup.attached is session
+        assert session._on_close == catchup.mark_ended
+    finally:
+        session.close()
+
+
+def test_realtime_session_factory_without_catchup_leaves_on_close_none():
+    from richard.cli import _realtime_session_factory
+    from richard.config import Config
+
+    config = Config()
+    config.voice.endpoint_silence_ms = 320
+
+    class NullTTS:
+        samplerate = 24000
+
+        def synth(self, text):
+            return b""
+
+    class NullTranscriber:
+        def partial(self, pcm):
+            return ""
+
+        def final(self, pcm):
+            return ""
+
+    class ScriptedVAD:
+        def is_speech(self, frame, samplerate=16000):
+            return False
+
+        def reset(self):
+            pass
+
+    factory = _realtime_session_factory(
+        config,
+        brain=object(),
+        providers_fn=lambda: [],
+        synth=NullTTS(),
+        transcriber=NullTranscriber(),
+        vad_factory=ScriptedVAD,
+    )
+    emitted = []
+    session = factory(emitted.append)
+    try:
+        assert session._on_close is None
+    finally:
+        session.close()
+
+
+def test_build_catchup_wires_perception_control_and_ha(tmp_path, monkeypatch):
+    from richard.cli import _build_catchup
+    from richard.config import Config
+    from richard.plugins.home_assistant.client import HomeAssistantClient
+    from richard.plugins.home_assistant.provider import HomeAssistantProvider
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    class FakePerceptionPlugin:
+        def __init__(self):
+            self.service = object()
+
+    perception_plugin = FakePerceptionPlugin()
+    ha_provider = HomeAssistantProvider(HomeAssistantClient("http://ha.local", "token"))
+
+    class FakeRegistry:
+        def plugin(self, name):
+            return perception_plugin if name == "perception" else None
+
+        def providers(self):
+            return [ha_provider]
+
+    config = Config()
+    control_store = object()
+
+    catchup = _build_catchup(config, FakeRegistry(), control_store)
+
+    assert catchup._perception_service is perception_plugin.service
+    assert catchup._control_store is control_store
+    assert catchup._ha_client is ha_provider.client
+
+
+def test_build_catchup_without_perception_or_ha_plugin(tmp_path, monkeypatch):
+    from richard.cli import _build_catchup
+    from richard.config import Config
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    class FakeRegistry:
+        def plugin(self, name):
+            return None
+
+        def providers(self):
+            return []
+
+    config = Config()
+    control_store = object()
+
+    catchup = _build_catchup(config, FakeRegistry(), control_store)
+
+    assert catchup._perception_service is None
+    assert catchup._control_store is control_store
+    assert catchup._ha_client is None
+
+
 def test_build_tts_remote_passes_model_language_and_instructions(monkeypatch):
     import richard.voice.remote as remote_mod
     from richard.cli import _build_tts

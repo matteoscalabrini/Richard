@@ -9,13 +9,17 @@ last perception/notification ids seen, so the next build only looks at what's ne
 from __future__ import annotations
 
 import json
+import logging
 import os
 import tempfile
-from datetime import datetime
+import threading
+from datetime import datetime, timezone
 from pathlib import Path
 
-from richard.clock import stamp
+from richard.clock import local_now, stamp
 from richard.perception.events import PerceptionEvent
+
+log = logging.getLogger("richard.catchup")
 
 _MAX_BULLETS = 10
 _MAX_CHARS = 600
@@ -162,3 +166,95 @@ def build_digest(*, now: datetime, tz_name: str | None, last_ended_at: str | Non
         if not bullets:
             return text
         bullets = bullets[:-1]
+
+
+class CatchUp:
+    """Gathers perception, control-loop and Home Assistant state at session start and
+    turns it into one background message the session queues for the first turn.
+
+    Every source is optional: an absent one is simply skipped, and a raising one (HA
+    in particular — it's a network call) degrades the digest instead of blocking it.
+    """
+
+    def __init__(self, state: SessionState, *, tz_name: str | None,
+                 perception_service=None, control_store=None, ha_client=None,
+                 now=local_now) -> None:
+        self._state = state
+        self._tz_name = tz_name
+        self._perception_service = perception_service
+        self._control_store = control_store
+        self._ha_client = ha_client
+        self._now = now
+
+    def digest(self) -> str | None:
+        data = self._state.read()
+
+        perception_events: list[dict] = []
+        present: list[dict] = []
+        if self._perception_service is not None:
+            perception_events = self._perception_service.log.recent(
+                since_id=data["last_perception_id"], limit=200)
+            present = self._perception_service.presence()
+
+        notifications: list[dict] = []
+        if self._control_store is not None:
+            for note in self._control_store.notifications(limit=50):
+                if note.id > data["last_notification_id"]:
+                    notifications.append({
+                        "id": note.id, "loop_name": note.loop_name,
+                        "summary": note.summary, "created_at": note.created_at,
+                    })
+
+        lights_on: list[str] | None = None
+        if self._ha_client is not None:
+            try:
+                entities = self._ha_client.list_entities()
+                lights_on = [
+                    (entity.attributes.get("friendly_name") or entity.entity_id)
+                    for entity in entities
+                    if entity.domain == "light" and entity.state == "on"
+                ]
+            except Exception:
+                lights_on = None
+
+        now = self._now(self._tz_name)
+        return build_digest(
+            now=now, tz_name=self._tz_name, last_ended_at=data["last_ended_at"],
+            perception_events=perception_events, notifications=notifications,
+            lights_on=lights_on, present=present,
+        )
+
+    def mark_ended(self) -> None:
+        try:
+            now = self._now(self._tz_name)
+            ended_at = now.astimezone(timezone.utc).isoformat(timespec="seconds")
+            last_perception_id = (
+                self._perception_service.log.last_id() if self._perception_service is not None else 0
+            )
+            last_notification_id = (
+                self._control_store.last_notification_id() if self._control_store is not None else 0
+            )
+            self._state.write(
+                last_ended_at=ended_at, last_perception_id=last_perception_id,
+                last_notification_id=last_notification_id,
+            )
+        except Exception as exc:
+            log.warning("catch-up digest failed: %s", exc)
+
+    def attach(self, session) -> threading.Thread:
+        """Build the digest on a daemon thread and queue it on `session` when non-empty.
+        Runs off the connection path so a slow or failing source never delays
+        `session.created`."""
+
+        def run() -> None:
+            try:
+                text = self.digest()
+                if text:
+                    session.add_background(text)
+                    log.info("catch-up digest queued (%d chars)", len(text))
+            except Exception as exc:
+                log.warning("catch-up digest failed: %s", exc)
+
+        thread = threading.Thread(target=run, daemon=True)
+        thread.start()
+        return thread

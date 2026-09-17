@@ -495,7 +495,8 @@ def _build_turn_predictor(config, *, ensure_smart_turn, write=print):
 
 
 def _realtime_session_factory(config, *, brain, providers_fn, synth, transcriber, vad_factory,
-                              registry=None, perception=None, brains=None, turn_predictor=None):
+                              registry=None, perception=None, brains=None, turn_predictor=None,
+                              catchup=None):
     """Build the per-connection session factory for /v1/realtime.
 
     One transcriber and one TTS engine are shared across sessions (models load
@@ -532,13 +533,17 @@ def _realtime_session_factory(config, *, brain, providers_fn, synth, transcriber
         observation = None
         if perception is not None:
             observation = lambda source_id: perception.snapshot(source_id=source_id, detail="low")
-        return RealtimeSession(
+        session = RealtimeSession(
             engine=engine, transcriber=transcriber, tts=synth,
             detector=detector, emit=emit, registry=registry,
             observation=observation, source_change=bind_source,
             cue_voice=cue_fingerprint(config, "en"),
             tz_name=config.timezone or None,
+            on_close=catchup.mark_ended if catchup else None,
         )
+        if catchup:
+            catchup.attach(session)
+        return session
 
     return factory
 
@@ -737,6 +742,29 @@ def _perception_service_of(registry):
     return getattr(plugin, "service", None) if plugin is not None else None
 
 
+def _build_catchup(config, registry, control_store):
+    """The catch-up digest gatherer for a fresh realtime session: perception events and
+    presence (if the perception plugin is running), loop notifications (always, one
+    store for the whole serve assembly), and a live Home Assistant snapshot (if that
+    plugin is enabled)."""
+    from richard.catchup import CatchUp, SessionState, default_session_state_path
+    from richard.plugins.home_assistant.provider import HomeAssistantProvider
+
+    ha_client = None
+    for provider in registry.providers():
+        if isinstance(provider, HomeAssistantProvider):
+            ha_client = provider.client
+            break
+
+    return CatchUp(
+        SessionState(default_session_state_path()),
+        tz_name=config.timezone or None,
+        perception_service=_perception_service_of(registry),
+        control_store=control_store,
+        ha_client=ha_client,
+    )
+
+
 def _run_serve(write: Callable[[str], None] = print) -> int:
     _configure_logging()
     config = load_config()
@@ -895,11 +923,12 @@ def _run_serve(write: Callable[[str], None] = print) -> int:
                 language=None if config.voice.language == "auto" else config.voice.language,
                 languages=tuple(config.voice.languages),
             )
+            catchup = _build_catchup(config, registry, control_store)
             factory = _realtime_session_factory(
                 config, brain=brain, providers_fn=_serve_providers, synth=synth,
                 transcriber=transcriber, vad_factory=lambda: SileroVAD(silero_path),
                 registry=session_registry, perception=perception_service, brains=brains,
-                turn_predictor=predictor,
+                turn_predictor=predictor, catchup=catchup,
             )
             realtime_coro = _serve_realtime_guarded(
                 serve_realtime(

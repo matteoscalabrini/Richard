@@ -143,6 +143,10 @@ class PresenceLog:
             "WHERE id > ? ORDER BY id DESC LIMIT ?", (since_id, limit)).fetchall()
         return [self._row(r) for r in reversed(rows)]
 
+    def last_id(self) -> int:
+        r = self._conn.execute("SELECT MAX(id) FROM perception_log").fetchone()
+        return int(r[0]) if r and r[0] is not None else 0
+
     def last_seen(self, subject: str) -> dict | None:
         r = self._conn.execute(
             "SELECT id, at, ts, source, kind, subject, confidence, thumbnail FROM perception_log "

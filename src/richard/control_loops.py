@@ -476,6 +476,11 @@ class ControlLoopStore:
             ).fetchall()
         return [self._notification(row) for row in rows]
 
+    def last_notification_id(self) -> int:
+        with self._lock:
+            r = self._conn.execute("SELECT MAX(id) FROM control_loop_notifications").fetchone()
+        return int(r[0]) if r and r[0] is not None else 0
+
     def mark_notification_read(self, notification_id: int) -> bool:
         with self._lock:
             cur = self._conn.execute(
