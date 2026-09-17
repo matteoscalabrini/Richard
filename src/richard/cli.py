@@ -40,6 +40,18 @@ def _build_brain(config, role: str = "conversational") -> LlamaCppBrain:
     )
 
 
+def _brain_kwargs(resolved) -> dict:
+    """The kwargs `LlamaCppBrain.reconfigure` needs to match a resolved BrainRole —
+    mirrors exactly what `_build_brain` passes to the constructor."""
+    return {
+        "endpoint": resolved.endpoint,
+        "model": resolved.model,
+        "api_key": resolved.api_key,
+        "timeout": resolved.timeout,
+        "extra_body": resolved.extra_body,
+    }
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="richard", description="Self-hosted voice house companion"
@@ -876,8 +888,8 @@ def _run_serve(write: Callable[[str], None] = print) -> int:
             # default above); a running [brains.thinking] is a separate Brain instance
             # this callback never touches, so the thinking-effort dial from the UI stays
             # scoped to conversational by construction, matching apply_thinking_effort.
-            apply_brain=lambda cfg: brain.set_extra_body(
-                resolve_brain_role(cfg, "conversational").extra_body
+            apply_brain=lambda cfg: brain.reconfigure(
+                **_brain_kwargs(resolve_brain_role(cfg, "conversational"))
             ),
         )
 

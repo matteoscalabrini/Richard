@@ -513,6 +513,11 @@ def _apply_config_update(config: Config, patch: dict) -> list[str]:
 class WebApp:
     """Routes HTTP requests to the config UI + JSON API. Synchronous handler for testability."""
 
+    # Changed keys that must reach the running conversational brain without a restart.
+    _BRAIN_LIVE_KEYS = frozenset(
+        {"llm_endpoint", "llm_model", "llm_api_key", "llm_timeout", "llm_thinking_effort"}
+    )
+
     def __init__(
         self,
         *,
@@ -915,7 +920,7 @@ class WebApp:
             self._save(config, self._config_path)
             if cue_before != (cue_languages(config), cue_fingerprint(config, "en")):
                 self._cue_preparation.request(config)
-            if "llm_thinking_effort" in changed and self._apply_brain is not None:
+            if self._BRAIN_LIVE_KEYS.intersection(changed) and self._apply_brain is not None:
                 try:
                     self._apply_brain(self._load(self._config_path))
                 except Exception:

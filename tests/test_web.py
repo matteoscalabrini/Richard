@@ -303,6 +303,57 @@ def test_put_config_thinking_effort_rejects_invalid_value(tmp_path):
     assert resp.status == 400
 
 
+def test_put_config_llm_model_applies_to_running_brain(tmp_path):
+    applied = []
+    app = _app(tmp_path, apply_brain=lambda cfg: applied.append(cfg))
+    resp = app.handle(
+        "PUT", "/api/config", json.dumps({"llm_model": "other"}).encode()
+    )
+    assert resp.status == 200
+    assert len(applied) == 1
+    assert applied[0].llm_model == "other"
+
+
+def test_put_config_llm_endpoint_applies_to_running_brain(tmp_path):
+    applied = []
+    app = _app(tmp_path, apply_brain=lambda cfg: applied.append(cfg))
+    resp = app.handle(
+        "PUT", "/api/config", json.dumps({"llm_endpoint": "http://other:9090"}).encode()
+    )
+    assert resp.status == 200
+    assert len(applied) == 1
+
+
+def test_put_config_llm_api_key_applies_to_running_brain(tmp_path):
+    applied = []
+    app = _app(tmp_path, apply_brain=lambda cfg: applied.append(cfg))
+    resp = app.handle(
+        "PUT", "/api/config", json.dumps({"llm_api_key": "secret"}).encode()
+    )
+    assert resp.status == 200
+    assert len(applied) == 1
+
+
+def test_put_config_llm_timeout_applies_to_running_brain(tmp_path):
+    applied = []
+    app = _app(tmp_path, apply_brain=lambda cfg: applied.append(cfg))
+    resp = app.handle(
+        "PUT", "/api/config", json.dumps({"llm_timeout": 30.0}).encode()
+    )
+    assert resp.status == 200
+    assert len(applied) == 1
+
+
+def test_put_config_personality_only_does_not_apply_brain(tmp_path):
+    applied = []
+    app = _app(tmp_path, apply_brain=lambda cfg: applied.append(cfg))
+    resp = app.handle(
+        "PUT", "/api/config", json.dumps({"personality": {"humour": 80}}).encode()
+    )
+    assert resp.status == 200
+    assert applied == []
+
+
 def test_put_config_clears_api_key_with_empty_string(tmp_path):
     app = _app(tmp_path)
     # set a key first

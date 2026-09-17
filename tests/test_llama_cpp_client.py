@@ -221,6 +221,75 @@ def test_set_extra_body_reflected_in_next_request():
     assert captured["a"] == 1
 
 
+def test_reconfigure_model_reflected_in_next_request():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["url"] = str(request.url)
+        captured.update(json.loads(request.content))
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    brain = LlamaCppBrain("http://box:8080", "local", client=_client(handler))
+    brain.reconfigure(model="b")
+    brain.complete([{"role": "user", "content": "hi"}])
+    assert captured["model"] == "b"
+    assert captured["url"] == "http://box:8080/v1/chat/completions"
+
+
+def test_reconfigure_endpoint_changes_request_url():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["url"] = str(request.url)
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    brain = LlamaCppBrain("http://box:8080", "local", client=_client(handler))
+    brain.reconfigure(endpoint="http://other:9090")
+    brain.complete([{"role": "user", "content": "hi"}])
+    assert captured["url"] == "http://other:9090/v1/chat/completions"
+
+
+def test_reconfigure_api_key_changes_auth_header():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["auth"] = request.headers.get("authorization")
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    brain = LlamaCppBrain("http://box:8080", "local", client=_client(handler))
+    brain.reconfigure(api_key="secret")
+    brain.complete([{"role": "user", "content": "hi"}])
+    assert captured["auth"] == "Bearer secret"
+
+
+def test_reconfigure_extra_body_reflected_in_next_request():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.update(json.loads(request.content))
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    brain = LlamaCppBrain("http://box:8080", "local", client=_client(handler))
+    brain.reconfigure(extra_body={"a": 1})
+    brain.complete([{"role": "user", "content": "hi"}])
+    assert captured["a"] == 1
+
+
+def test_reconfigure_none_values_leave_attributes_unchanged():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["url"] = str(request.url)
+        captured.update(json.loads(request.content))
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    brain = LlamaCppBrain("http://box:8080", "local", client=_client(handler))
+    brain.reconfigure()
+    brain.complete([{"role": "user", "content": "hi"}])
+    assert captured["model"] == "local"
+    assert captured["url"] == "http://box:8080/v1/chat/completions"
+
+
 from richard.conversation import user_parts  # noqa: E402
 from richard.errors import BrainRejectedInput  # noqa: E402
 

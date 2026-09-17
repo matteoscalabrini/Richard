@@ -641,6 +641,27 @@ def test_build_brain_passes_resolved_extra_body(monkeypatch):
     assert seen["extra_body"] == {"chat_template_kwargs": {"enable_thinking": False}}
 
 
+def test_brain_kwargs_maps_resolved_role_fields():
+    import richard.cli as cli_mod
+    from richard.config import resolve_brain_role, Config
+
+    config = Config()
+    config.llm_endpoint = "http://box:8080"
+    config.llm_model = "my-model"
+    config.llm_api_key = "secret"
+    config.llm_timeout = 42.0
+    config.llm_extra_body = {"chat_template_kwargs": {"enable_thinking": False}}
+    resolved = resolve_brain_role(config, "conversational")
+    kwargs = cli_mod._brain_kwargs(resolved)
+    assert kwargs == {
+        "endpoint": "http://box:8080",
+        "model": "my-model",
+        "api_key": "secret",
+        "timeout": 42.0,
+        "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
+    }
+
+
 def _fake_remote_engine(monkeypatch):
     import richard.voice.remote as remote_mod
 

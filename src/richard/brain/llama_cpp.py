@@ -71,6 +71,33 @@ class LlamaCppBrain:
         lets a live thinking-effort setting reach the running brain without a restart."""
         self._extra_body = dict(extra_body or {})
 
+    def reconfigure(
+        self,
+        *,
+        endpoint: str | None = None,
+        model: str | None = None,
+        api_key: str | None = None,
+        timeout: float | None = None,
+        extra_body: dict | None = None,
+    ) -> None:
+        """Replace the given attributes — lets a live model/endpoint/key/timeout
+        change from the web UI reach the running brain without a restart. Each
+        argument left as None leaves the corresponding attribute untouched;
+        `endpoint` is re-derived into `self._url` the same way `__init__` does."""
+        if endpoint is not None:
+            base = endpoint.rstrip("/")
+            if base.endswith("/v1"):
+                base = base[: -len("/v1")]
+            self._url = base + "/v1/chat/completions"
+        if model is not None:
+            self._model = model
+        if api_key is not None:
+            self._api_key = api_key
+        if timeout is not None:
+            self._client.timeout = timeout
+        if extra_body is not None:
+            self.set_extra_body(extra_body)
+
     def complete(self, messages: list[dict], tools: list[dict] | None = None) -> Completion:
         # cache_prompt: llama.cpp reuses the prompt KV cache across turns — the system
         # prompt + history prefix is identical every turn, so this cuts TTFT sharply.
