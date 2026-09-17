@@ -1,8 +1,9 @@
 import json
 
 import httpx
+import pytest
 
-from richard.voice.voices import VoiceLibrary
+from richard.voice.voices import VoiceLibrary, VoiceUploadError
 
 
 def _client(handler):
@@ -46,3 +47,27 @@ def test_errors_propagate_as_httpx_errors():
         pass
     else:
         raise AssertionError("expected an httpx error")
+
+
+def test_upload_error_carries_the_server_message():
+    body = {
+        "error": {
+            "message": "Reference audio too long (70.0s). Maximum 30s supported — use a shorter clip.",
+            "type": "BadRequestError",
+            "code": 400,
+        }
+    }
+
+    def handler(request):
+        return httpx.Response(400, json=body)
+
+    library = VoiceLibrary("http://host:8091", client=_client(handler))
+    with pytest.raises(VoiceUploadError) as excinfo:
+        library.upload("clap1v", b"RIFF....", "clap1v.wav", transcript="", consent="web-clap1v-2026-09-16")
+    assert str(excinfo.value) == "Reference audio too long (70.0s). Maximum 30s supported — use a shorter clip."
+
+
+def test_upload_error_falls_back_to_status_text_when_no_json_body():
+    library = VoiceLibrary("http://host:8091", client=_client(lambda request: httpx.Response(400, text="nope")))
+    with pytest.raises(VoiceUploadError):
+        library.upload("clap1v", b"RIFF....", "clap1v.wav", transcript="", consent="web-clap1v-2026-09-16")

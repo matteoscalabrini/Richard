@@ -1238,6 +1238,20 @@ def test_voice_upload_forwards_the_sample_and_refreshes_the_list(tmp_path):
     assert consent.startswith("web-clap1v-")
 
 
+def test_voice_upload_surfaces_the_tts_server_message(tmp_path):
+    from richard.voice.voices import VoiceUploadError
+
+    class FailingLibrary(FakeVoiceLibrary):
+        def upload(self, name, audio, filename, *, transcript="", consent=""):
+            raise VoiceUploadError("Reference audio too short (0.8s). At least 1s of clear speech is required.")
+
+    app = _remote_app(tmp_path, FailingLibrary("unused"))
+    payload = {"name": "clap1v", "filename": "clap1v.wav", "audio_base64": base64.b64encode(b"RIFF....").decode()}
+    resp = app.handle("POST", "/api/voices", json.dumps(payload).encode())
+    assert resp.status == 400
+    assert _body(resp)["error"] == "upload failed: Reference audio too short (0.8s). At least 1s of clear speech is required."
+
+
 def test_voice_upload_validates_name_audio_and_size(tmp_path):
     app = _remote_app(tmp_path, FakeVoiceLibrary("unused"))
     bad_name = {"name": "bad name!", "audio_base64": base64.b64encode(b"x").decode()}

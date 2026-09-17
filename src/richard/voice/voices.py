@@ -14,6 +14,26 @@ import httpx
 _MIME_BY_SUFFIX = {".wav": "audio/wav", ".mp3": "audio/mpeg", ".flac": "audio/flac", ".ogg": "audio/ogg", ".m4a": "audio/mp4"}
 
 
+class VoiceUploadError(RuntimeError):
+    """Raised when the TTS server rejects an uploaded reference sample.
+
+    Carries the server's own explanation (bad format, too short/long, ...) so the
+    caller can show it instead of a generic "400 Bad Request".
+    """
+
+
+def _server_error_message(response: httpx.Response) -> str:
+    try:
+        data = response.json()
+    except ValueError:
+        return response.text.strip() or response.reason_phrase
+    if isinstance(data, dict):
+        error = data.get("error")
+        if isinstance(error, dict) and error.get("message"):
+            return str(error["message"])
+    return response.text.strip() or response.reason_phrase
+
+
 class VoiceLibrary:
     def __init__(self, endpoint: str, *, client: httpx.Client | None = None, timeout: float = 120.0) -> None:
         self._url = endpoint.rstrip("/") + "/v1/audio/voices"
@@ -41,7 +61,10 @@ class VoiceLibrary:
             files={"audio_sample": (filename, audio, mime)},
             data={"name": name, "ref_text": transcript, "consent": consent},
         )
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise VoiceUploadError(_server_error_message(exc.response)) from exc
         try:
             return response.json()
         except ValueError:
