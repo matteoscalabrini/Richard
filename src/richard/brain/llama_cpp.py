@@ -9,6 +9,10 @@ from richard.brain.completion import Completion, StreamEvent, ToolCall
 from richard.conversation import Message
 from richard.errors import BrainRejectedInput, BrainUnreachable
 
+# Sentinel default for reconfigure()'s kwargs: unlike None (which now means "clear"
+# for api_key and extra_body), "not passed" must leave the attribute untouched.
+_UNSET = object()
+
 
 def _parse_arguments(raw: str) -> dict:
     """Tool arguments off the wire. Anything but a JSON object becomes {} —
@@ -74,28 +78,31 @@ class LlamaCppBrain:
     def reconfigure(
         self,
         *,
-        endpoint: str | None = None,
-        model: str | None = None,
-        api_key: str | None = None,
-        timeout: float | None = None,
-        extra_body: dict | None = None,
+        endpoint: str | None = _UNSET,
+        model: str | None = _UNSET,
+        api_key: str | None = _UNSET,
+        timeout: float | None = _UNSET,
+        extra_body: dict | None = _UNSET,
     ) -> None:
         """Replace the given attributes — lets a live model/endpoint/key/timeout
-        change from the web UI reach the running brain without a restart. Each
-        argument left as None leaves the corresponding attribute untouched;
-        `endpoint` is re-derived into `self._url` the same way `__init__` does."""
-        if endpoint is not None:
+        change from the web UI reach the running brain without a restart. An
+        argument left unpassed leaves the corresponding attribute untouched.
+        `api_key=None` and `extra_body=None` explicitly clear those (no auth header,
+        empty extra body); `endpoint`, `model` and `timeout` cannot be cleared, so
+        `None` there is treated the same as "not passed". `endpoint` is re-derived
+        into `self._url` the same way `__init__` does."""
+        if endpoint is not None and endpoint is not _UNSET:
             base = endpoint.rstrip("/")
             if base.endswith("/v1"):
                 base = base[: -len("/v1")]
             self._url = base + "/v1/chat/completions"
-        if model is not None:
+        if model is not None and model is not _UNSET:
             self._model = model
-        if api_key is not None:
+        if api_key is not _UNSET:
             self._api_key = api_key
-        if timeout is not None:
+        if timeout is not None and timeout is not _UNSET:
             self._client.timeout = timeout
-        if extra_body is not None:
+        if extra_body is not _UNSET:
             self.set_extra_body(extra_body)
 
     def complete(self, messages: list[dict], tools: list[dict] | None = None) -> Completion:

@@ -275,19 +275,53 @@ def test_reconfigure_extra_body_reflected_in_next_request():
     assert captured["a"] == 1
 
 
-def test_reconfigure_none_values_leave_attributes_unchanged():
+def test_reconfigure_with_nothing_passed_changes_nothing():
     captured = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         captured["url"] = str(request.url)
+        captured["auth"] = request.headers.get("authorization")
         captured.update(json.loads(request.content))
         return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
 
-    brain = LlamaCppBrain("http://box:8080", "local", client=_client(handler))
+    brain = LlamaCppBrain(
+        "http://box:8080", "local", api_key="secret", client=_client(handler),
+        extra_body={"a": 1},
+    )
     brain.reconfigure()
     brain.complete([{"role": "user", "content": "hi"}])
     assert captured["model"] == "local"
     assert captured["url"] == "http://box:8080/v1/chat/completions"
+    assert captured["auth"] == "Bearer secret"
+    assert captured["a"] == 1
+
+
+def test_reconfigure_api_key_none_drops_the_auth_header():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["auth"] = request.headers.get("authorization")
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    brain = LlamaCppBrain("http://box:8080", "local", api_key="secret", client=_client(handler))
+    brain.reconfigure(api_key=None)
+    brain.complete([{"role": "user", "content": "hi"}])
+    assert captured["auth"] is None
+
+
+def test_reconfigure_extra_body_none_clears_it():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.update(json.loads(request.content))
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    brain = LlamaCppBrain(
+        "http://box:8080", "local", client=_client(handler), extra_body={"a": 1},
+    )
+    brain.reconfigure(extra_body=None)
+    brain.complete([{"role": "user", "content": "hi"}])
+    assert "a" not in captured
 
 
 from richard.conversation import user_parts  # noqa: E402
