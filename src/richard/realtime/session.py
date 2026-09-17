@@ -50,7 +50,8 @@ class RealtimeSession:
     def __init__(self, *, engine, transcriber, tts, detector, emit,
                  partial_every: int = 25, barge_in: str = "vad",
                  registry=None, clock_hm=lambda: time.strftime("%H:%M"),
-                 observation=None, source_change=None, cue_voice=None, tz_name=None) -> None:
+                 observation=None, source_change=None, cue_voice=None, tz_name=None,
+                 on_close=None) -> None:
         self._engine = engine
         self._transcriber = transcriber
         self._tts = tts
@@ -66,11 +67,13 @@ class RealtimeSession:
         self._source_change = source_change
         self._cue_voice = cue_voice
         self._tz_name = tz_name
+        self._on_close = on_close
         self._cue_language = None
         self.source_id: str | None = None
         self.playback_ack = False
         self.visual_context = False
         self._context: list[str] = []
+        self._background: str | None = None
         self._context_lock = threading.Lock()
         self._attention_pending = False
         # Set by _apply_item to the freshness of the most recently applied message-kind
@@ -181,11 +184,20 @@ class RealtimeSession:
             self._context.append(f"[perception] {self._clock_hm()} {line}")
             self._context = self._context[-8:]
 
+    def add_background(self, text: str) -> None:
+        """Queue a background (catch-up) message for the first turn (any thread). A
+        second call replaces any pending one. Never counted as "something to say":
+        it does not wake the session and does not defeat the nothing_new short-circuit."""
+        with self._context_lock:
+            self._background = text
+
     def _drain_context(self) -> str | None:
         with self._context_lock:
             lines, self._context = self._context, []
+            background, self._background = self._background, None
             self._attention_pending = False
-        return "\n".join(lines) if lines else None
+        parts = ([background] if background else []) + lines
+        return "\n".join(parts) if parts else None
 
     def _has_context(self) -> bool:
         with self._context_lock:
@@ -315,6 +327,11 @@ class RealtimeSession:
         self._closed.set()
         if self._registry is not None:
             self._registry.remove(self)
+        if self._on_close is not None:
+            try:
+                self._on_close()
+            except Exception as exc:
+                log.warning("on_close hook failed: %s", exc)
         with self._state_lock:
             self._reset_unsolicited()
             self._interrupt.set()

@@ -914,3 +914,57 @@ def test_unsolicited_rule_scopes_curiosity_to_unprompted_turns():
 
     assert "genuinely interests you" in UNSOLICITED_RULE
     assert "NOTHING_TO_SAY" in UNSOLICITED_RULE
+
+
+def test_background_message_precedes_the_first_spoken_turn():
+    engine = FakeEngine()
+    session, emitted, done = collect_session(engine=engine)  # default detector + transcriber speak "turn the fan on"
+    session.add_background("[catch-up] While you were away: the porch light came on.")
+    session.feed_audio(FRAME * 2)
+    wait(done)
+    seen = engine.seen[0]
+    role0, content0 = seen[0]
+    assert role0 == "user"
+    assert content0 == "[catch-up] While you were away: the porch light came on."
+    role1, content1 = seen[1]
+    assert role1 == "user"
+    assert content1.startswith("Now: ")
+    assert content1.endswith("turn the fan on")
+    session.close()
+
+
+def test_background_message_does_not_wake_the_session():
+    session, emitted, done = collect_session(detector=ScriptedDetector([]))
+    session.add_background("[catch-up] Nothing much happened.")
+    assert session.wake() is False
+    kinds = [e["type"] for e in emitted]
+    assert "response.created" not in kinds
+    session.close()
+
+
+def test_background_message_alone_still_short_circuits_create_response():
+    engine = FakeEngine()
+    session, emitted, done = collect_session(engine=engine, detector=ScriptedDetector([]))
+    session.add_background("[catch-up] Nothing much happened.")
+    session.create_response()
+    kinds = [e["type"] for e in emitted]
+    assert kinds == ["response.created", "response.done"]
+    assert engine.seen == []
+    session.close()
+
+
+def test_close_calls_on_close_once():
+    calls = []
+    session, emitted, done = collect_session(
+        detector=ScriptedDetector([]), on_close=lambda: calls.append(1)
+    )
+    session.close()
+    assert calls == [1]
+
+
+def test_close_swallows_a_raising_on_close():
+    def boom():
+        raise RuntimeError("boom")
+
+    session, emitted, done = collect_session(detector=ScriptedDetector([]), on_close=boom)
+    session.close()  # must not raise
