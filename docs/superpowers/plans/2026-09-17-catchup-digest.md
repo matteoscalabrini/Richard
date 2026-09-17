@@ -99,3 +99,19 @@ Rules: header always first; person lines use `PerceptionEvent.line()` text for k
 ## Self-review
 - Constraints covered: no wake (Task 2 tests b, c), caps (Task 1), first run none (Task 1), background thread (Task 3), persistence as user message before user text (Task 2 test a).
 - Names consistent: `add_background`, `on_close`, `SessionState`, `CatchUp.attach/mark_ended/digest`, `PresenceLog.last_id`, `ControlLoopStore.last_notification_id`.
+
+---
+
+### Task 5: Brain model/endpoint changes apply live (bug reported 2026-09-17)
+
+**Files:**
+- Modify: `src/richard/brain/llama_cpp.py` (`reconfigure`), `src/richard/web/app.py` (`_put_config`: call `apply_brain` when any of `llm_endpoint`, `llm_model`, `llm_api_key`, `llm_timeout`, `llm_thinking_effort` changed), `src/richard/cli.py` (`apply_brain` lambda → `brain.reconfigure(role)` with the resolved conversational role)
+- Test: `tests/test_llama_cpp_client.py`, `tests/test_web.py`, `tests/test_cli.py`
+
+**Interfaces:** `LlamaCppBrain.reconfigure(*, endpoint=None, model=None, api_key=None, timeout=None, extra_body=None)`: each given value replaces the instance attribute (single assignment each; the base URL is re-derived from `endpoint` the same way `__init__` does); the next `complete`/`stream` uses them. `cli.py`: `apply_brain = lambda cfg: brain.reconfigure(**_brain_kwargs(resolve_brain_role(cfg, "conversational")))` where `_brain_kwargs` maps the resolved role to the kwargs `__init__` takes. `brains["thinking"]` is not touched.
+
+- [ ] **Step 1: Failing tests**: (a) `reconfigure(model="b")` → the next request body has `"model": "b"` and the URL uses a new `endpoint` when given (MockTransport); (b) `PUT /api/config {"llm_model": "other"}` → `apply_brain` called once with a config whose `llm_model == "other"`; a PUT changing only `personality.humour` does not call it; (c) cli: the lambda maps endpoint/model/api_key/timeout/extra_body from the resolved role (unit test on `_brain_kwargs`).
+- [ ] **Step 2: Run** → failures.
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run** the three test files + suite.
+- [ ] **Step 5: Commit** `brain: model, endpoint and key changes from the web UI apply without restart`
