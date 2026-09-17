@@ -95,8 +95,11 @@ def _ago(now: datetime, last_ended_at: str) -> str:
 def _header(now: datetime, tz_name: str | None, last_ended_at: str) -> str:
     local = stamp(last_ended_at, tz_name)
     ago = _ago(now, last_ended_at)
-    return (f"[catch-up] Background since the last conversation ended {local} ({ago}). "
-            "Use it only to answer questions or ground what you say; do not report it unless asked.")
+    return (
+        f"[catch-up] Richard's own notes from while nobody was talking (last conversation ended "
+        f"{local}, {ago}). Not a message from the user and not news. Reply only to what the user "
+        "says next; mention any of this only if asked or directly relevant."
+    )
 
 
 def _person_bullets(perception_events: list[dict], tz_name: str | None) -> list[str]:
@@ -155,7 +158,7 @@ def build_digest(*, now: datetime, tz_name: str | None, last_ended_at: str | Non
             bullets.append("- no lights on now")
     if present:
         names = ", ".join(f"{p.get('subject', '')} ({p.get('source', '')})" for p in present)
-        bullets.append(f"- in view now: {names}")
+        bullets.append(f"- camera currently shows: {names}")
 
     header = _header(now, tz_name, last_ended_at)
 
@@ -228,11 +231,14 @@ class CatchUp:
         try:
             now = self._now(self._tz_name)
             ended_at = now.astimezone(timezone.utc).isoformat(timespec="seconds")
+            previous = self._state.read()
             last_perception_id = (
-                self._perception_service.log.last_id() if self._perception_service is not None else 0
+                self._perception_service.log.last_id() if self._perception_service is not None
+                else previous["last_perception_id"]
             )
             last_notification_id = (
-                self._control_store.last_notification_id() if self._control_store is not None else 0
+                self._control_store.last_notification_id() if self._control_store is not None
+                else previous["last_notification_id"]
             )
             self._state.write(
                 last_ended_at=ended_at, last_perception_id=last_perception_id,
@@ -248,6 +254,9 @@ class CatchUp:
 
         def run() -> None:
             try:
+                if session.conversation.history():
+                    log.info("catch-up digest skipped: conversation already started")
+                    return
                 text = self.digest()
                 if text:
                     session.add_background(text)

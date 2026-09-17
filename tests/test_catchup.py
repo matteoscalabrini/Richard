@@ -67,14 +67,15 @@ def test_exact_example_from_brief():
         present=[{"subject": "Matteo", "source": "browser"}],
     )
     expected = (
-        "[catch-up] Background since the last conversation ended 2026-09-16 21:58 (11 h ago). "
-        "Use it only to answer questions or ground what you say; do not report it unless asked.\n"
+        "[catch-up] Richard's own notes from while nobody was talking (last conversation ended "
+        "2026-09-16 21:58, 11 h ago). Not a message from the user and not news. Reply only to "
+        "what the user says next; mention any of this only if asked or directly relevant.\n"
         "- 22:14 Matteo is no longer in the camera frame (browser)\n"
         "- 07:40 someone appeared in the camera frame (browser)\n"
         "- camera view changed 6 times; 2 still periods\n"
         '- loop "kitchen light" 07:55: the light was left on overnight\n'
         "- lights on now: Lampada Scrivania, Lampade Salotto\n"
-        "- in view now: Matteo (browser)"
+        "- camera currently shows: Matteo (browser)"
     )
     assert digest == expected
 
@@ -137,7 +138,7 @@ def test_ago_minutes_under_an_hour():
         lights_on=None,
         present=[],
     )
-    assert "(30 min ago)" in digest
+    assert "30 min ago" in digest
 
 
 def test_ago_days():
@@ -151,7 +152,7 @@ def test_ago_days():
         lights_on=None,
         present=[],
     )
-    assert "(4 days ago)" in digest
+    assert "4 days ago" in digest
 
 
 def test_no_lights_on_now_line_when_empty_list():
@@ -294,10 +295,19 @@ class RaisingHAClient:
         raise RuntimeError("boom")
 
 
+class FakeConversation:
+    def __init__(self, messages=None):
+        self._messages = messages or []
+
+    def history(self):
+        return self._messages
+
+
 class FakeSession:
-    def __init__(self):
+    def __init__(self, history=None):
         self.background = None
         self.event = threading.Event()
+        self.conversation = FakeConversation(history)
 
     def add_background(self, text):
         self.background = text
@@ -347,7 +357,7 @@ def test_catchup_digest_gathers_all_sources(tmp_path):
     assert "old loop" not in digest  # id <= last_notification_id, excluded
     assert "Lampada Scrivania" in digest
     assert "switch.fan" not in digest  # not domain light
-    assert "in view now: Matteo (browser)" in digest
+    assert "camera currently shows: Matteo (browser)" in digest
 
 
 def test_catchup_digest_skips_absent_sources(tmp_path):
@@ -476,3 +486,37 @@ def test_catchup_attach_swallows_exception_and_warns(tmp_path, caplog):
             _time.sleep(0.05)
     assert session.background is None
     assert any("catch-up digest failed" in r.message for r in caplog.records)
+
+
+def test_catchup_attach_skips_when_conversation_already_started(tmp_path, caplog):
+    from richard.catchup import CatchUp
+
+    state = _state(tmp_path)
+    events = [{"id": 1, "at": "2026-09-17T05:40:00+00:00", "kind": "person_entered", "subject": "Matteo",
+               "source": "browser"}]
+    service = FakePerceptionService(events, last_id=1)
+    catchup = CatchUp(
+        state, tz_name="Europe/Rome", perception_service=service,
+        now=lambda tz: datetime(2026, 9, 17, 6, 58, tzinfo=timezone.utc),
+    )
+    session = FakeSession(history=[object()])  # a message already in the conversation
+    with caplog.at_level(logging.INFO, logger="richard.catchup"):
+        thread = catchup.attach(session)
+        thread.join(timeout=2.0)
+    assert session.background is None
+    assert any("catch-up digest skipped: conversation already started" in r.message
+                for r in caplog.records)
+
+
+def test_catchup_mark_ended_keeps_previous_perception_id_without_source(tmp_path):
+    from richard.catchup import CatchUp
+
+    state = _state(tmp_path, last_perception_id=99, last_notification_id=13)
+    catchup = CatchUp(
+        state, tz_name="Europe/Rome",
+        now=lambda tz: datetime(2026, 9, 17, 6, 58, tzinfo=timezone.utc),
+    )
+    catchup.mark_ended()
+    data = state.read()
+    assert data["last_perception_id"] == 99
+    assert data["last_notification_id"] == 13
