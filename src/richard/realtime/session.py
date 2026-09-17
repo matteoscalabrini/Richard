@@ -195,10 +195,13 @@ class RealtimeSession:
         with self._context_lock:
             self._background = text
 
-    def _drain_context(self) -> str | None:
+    def _drain_context(self, *, include_background: bool = True) -> str | None:
         with self._context_lock:
             lines, self._context = self._context, []
-            background, self._background = self._background, None
+            if include_background:
+                background, self._background = self._background, None
+            else:
+                background = None
             self._attention_pending = False
         parts = ([background] if background else []) + lines
         return "\n".join(parts) if parts else None
@@ -589,7 +592,7 @@ class RealtimeSession:
                 # _apply_item before _respond ran); fold the clock into it directly,
                 # before anything else is appended after it.
                 self.conversation.prefix_last_user(prefix)
-            context = self._drain_context()
+            context = self._drain_context(include_background=not unsolicited)
             if context:
                 if unsolicited:
                     context += "\n" + UNSOLICITED_RULE

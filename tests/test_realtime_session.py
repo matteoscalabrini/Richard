@@ -973,6 +973,30 @@ def test_background_message_precedes_a_typed_first_message():
     session.close()
 
 
+def test_unsolicited_turn_leaves_the_background_digest_for_the_next_user_turn():
+    engine = FakeEngine(deltas=("NOTHING_TO_SAY",))
+    session, emitted, done = collect_session(engine=engine, detector=ScriptedDetector([]))
+    session.add_background("[catch-up] Matteo caught up on the day.")
+    session.add_context("Matteo appeared in the kitchen")
+    assert session.wake() is True
+    wait(done)
+
+    # The unsolicited turn saw the perception line, not the catch-up digest.
+    unsolicited_contents = [content for _role, content in engine.seen[0]]
+    assert not any("[catch-up]" in c for c in unsolicited_contents)
+    assert any("Matteo appeared in the kitchen" in c for c in unsolicited_contents)
+
+    # A user-initiated turn afterward still gets the digest, ahead of the user's text.
+    session._detector.script = [[("speech_started",)], [("utterance", b"pcm")]]
+    session.feed_audio(FRAME * 2)
+    assert wait_until(lambda: len(engine.seen) == 2)
+    spoken_contents = [content for _role, content in engine.seen[1]]
+    catchup_index = next(i for i, c in enumerate(spoken_contents) if "[catch-up]" in c)
+    user_index = next(i for i, c in enumerate(spoken_contents) if c.endswith("turn the fan on"))
+    assert catchup_index < user_index
+    session.close()
+
+
 def test_close_calls_on_close_once():
     calls = []
     session, emitted, done = collect_session(
