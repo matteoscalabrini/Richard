@@ -31,29 +31,28 @@ def test_env_overrides_file(tmp_path, monkeypatch):
 
 def test_personality_defaults():
     p = Config().personality
-    assert (p.name, p.humour, p.honesty, p.directness) == ("Richard", 70, 90, 60)
+    assert (p.name, p.system_prompt) == ("Richard", "")
+    assert not hasattr(p, "humour")
 
 
 def test_personality_roundtrip(tmp_path):
     path = tmp_path / "config.toml"
     save_config(
-        Config(personality=Personality(name="Tars", humour=100, honesty=85, directness=40)),
+        Config(personality=Personality(name="Tars", system_prompt="You are {name}.")),
         path,
     )
     loaded = load_config(path)
     assert loaded.personality.name == "Tars"
-    assert loaded.personality.humour == 100
-    assert loaded.personality.honesty == 85
-    assert loaded.personality.directness == 40
+    assert loaded.personality.system_prompt == "You are {name}."
 
 
-def test_personality_clamped_on_load(tmp_path):
+def test_legacy_dial_keys_are_ignored_on_load(tmp_path):
+    # Configs written before the dials were removed still load; the keys are dropped.
     path = tmp_path / "config.toml"
-    path.write_text("[personality]\nhumour = 150\nhonesty = -5\ndirectness = 60\n")
+    path.write_text('[personality]\nname = "Tars"\nhumour = 150\nhonesty = -5\ndirectness = 60\n')
     loaded = load_config(path)
-    assert loaded.personality.humour == 100
-    assert loaded.personality.honesty == 0
-    assert loaded.personality.directness == 60
+    assert loaded.personality.name == "Tars"
+    assert not hasattr(loaded.personality, "humour")
 
 
 def test_missing_personality_section_uses_defaults(tmp_path):
@@ -61,7 +60,7 @@ def test_missing_personality_section_uses_defaults(tmp_path):
     path.write_text('llm_endpoint = "http://x:8080"\n')
     loaded = load_config(path)
     assert loaded.personality.name == "Richard"
-    assert loaded.personality.humour == 70
+    assert loaded.personality.system_prompt == ""
 
 
 @pytest.mark.parametrize(

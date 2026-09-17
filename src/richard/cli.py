@@ -11,7 +11,6 @@ from richard import __version__
 from richard.brain.llama_cpp import LlamaCppBrain
 from richard.config import (
     apply_home_assistant_url,
-    clamp_dial,
     default_plugins_dir,
     load_config,
     resolve_brain_role,
@@ -67,11 +66,6 @@ def _build_parser() -> argparse.ArgumentParser:
         "--set-timeout", type=float, metavar="SECONDS", help="Set the request timeout in seconds"
     )
     config_parser.add_argument("--set-name", metavar="NAME", help="Set the companion's name")
-    config_parser.add_argument("--set-humor", type=int, metavar="0-100", help="Set the humour dial")
-    config_parser.add_argument("--set-honesty", type=int, metavar="0-100", help="Set the honesty dial")
-    config_parser.add_argument(
-        "--set-directness", type=int, metavar="0-100", help="Set the directness dial"
-    )
     config_parser.add_argument("--set-voice-model", metavar="NAME", help="Set the local STT model (e.g. base.en)")
     config_parser.add_argument(
         "--set-voice-engine", choices=["kokoro", "piper", "remote"], help="Set the TTS engine"
@@ -168,15 +162,6 @@ def _run_config(args: argparse.Namespace, write: Callable[[str], None] = print) 
     if args.set_name:
         config.personality.name = args.set_name
         changed = True
-    if args.set_humor is not None:
-        config.personality.humour = clamp_dial(args.set_humor)
-        changed = True
-    if args.set_honesty is not None:
-        config.personality.honesty = clamp_dial(args.set_honesty)
-        changed = True
-    if args.set_directness is not None:
-        config.personality.directness = clamp_dial(args.set_directness)
-        changed = True
     if args.set_voice_model:
         config.voice.stt_model = args.set_voice_model
         changed = True
@@ -247,9 +232,6 @@ def _run_config(args: argparse.Namespace, write: Callable[[str], None] = print) 
         write(f"model:    {config.llm_model}")
         write(f"timeout:  {config.llm_timeout}")
         write(f"name:       {config.personality.name}")
-        write(f"humour:     {config.personality.humour}")
-        write(f"honesty:    {config.personality.honesty}")
-        write(f"directness: {config.personality.directness}")
         write(f"stt engine:   {config.voice.stt_engine}")
         write(f"stt model:    {config.voice.stt_model}")
         write(f"stt endpoint: {config.voice.stt_endpoint or '(unset)'}")

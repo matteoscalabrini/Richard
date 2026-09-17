@@ -176,7 +176,7 @@ def test_put_config_updates_and_persists(tmp_path):
     patch = {
         "llm_endpoint": "http://brain:8080",
         "llm_model": "Gemma4",
-        "personality": {"name": "Tars", "humour": 100, "honesty": 85, "directness": 40},
+        "personality": {"name": "Tars", "system_prompt": "You are {name}."},
         "voice": {"tts_engine": "piper", "tts_voice": "TARS", "vad_aggressiveness": 3},
         "home_assistant": {
             "enabled": True,
@@ -199,7 +199,8 @@ def test_put_config_updates_and_persists(tmp_path):
     assert "web.port" in data["changed"]
     assert data["config"]["llm_endpoint"] == "http://brain:8080"
     assert data["config"]["personality"]["name"] == "Tars"
-    assert data["config"]["personality"]["humour"] == 100
+    assert data["config"]["personality"]["system_prompt"] == "You are {name}."
+    assert "humour" not in data["config"]["personality"]
     assert data["config"]["voice"]["tts_engine"] == "piper"
     assert data["config"]["home_assistant"]["host"] == "ha.local"
     assert data["config"]["home_assistant"]["port"] == 8443
@@ -224,10 +225,11 @@ def test_put_config_updates_and_persists(tmp_path):
     assert reloaded.web.enabled is False
 
 
-def test_put_config_clamps_dials(tmp_path):
+def test_put_config_ignores_legacy_dials(tmp_path):
     app = _app(tmp_path)
     resp = app.handle("PUT", "/api/config", json.dumps({"personality": {"humour": 999}}).encode())
-    assert _body(resp)["config"]["personality"]["humour"] == 100
+    assert resp.status == 200
+    assert "personality.humour" not in _body(resp)["changed"]
 
 
 def test_put_config_empty_patch_is_noop(tmp_path):
@@ -348,7 +350,7 @@ def test_put_config_personality_only_does_not_apply_brain(tmp_path):
     applied = []
     app = _app(tmp_path, apply_brain=lambda cfg: applied.append(cfg))
     resp = app.handle(
-        "PUT", "/api/config", json.dumps({"personality": {"humour": 80}}).encode()
+        "PUT", "/api/config", json.dumps({"personality": {"name": "Tars"}}).encode()
     )
     assert resp.status == 200
     assert applied == []
@@ -903,7 +905,7 @@ def test_get_config_exposes_system_prompt_and_default(tmp_path):
     assert data["personality"]["system_prompt"] == ""
     # read-only default so the UI can show it as a placeholder
     assert "prompt_default" in data
-    assert data["prompt_default"].startswith("You are {name},")
+    assert data["prompt_default"].startswith("You are {name}. You are an experiment")
 
 
 def test_put_sets_and_clears_system_prompt(tmp_path):

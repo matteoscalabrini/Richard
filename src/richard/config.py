@@ -35,9 +35,6 @@ def thinking_kwargs(level: str) -> dict:
 @dataclass
 class Personality:
     name: str = "Richard"
-    humour: int = 70
-    honesty: int = 90
-    directness: int = 60
     system_prompt: str = ""  # overrides the built-in base character when non-empty
 
 
@@ -298,9 +295,6 @@ def load_config(path: Path | None = None) -> Config:
     p = data.get("personality", {})
     personality = Personality(
         name=p.get("name", Personality.name) or Personality.name,
-        humour=clamp_dial(p.get("humour", Personality.humour)),
-        honesty=clamp_dial(p.get("honesty", Personality.honesty)),
-        directness=clamp_dial(p.get("directness", Personality.directness)),
         system_prompt=p.get("system_prompt", "") or "",
     )
     v = data.get("voice", {})
@@ -457,9 +451,6 @@ def save_config(config: Config, path: Path | None = None) -> None:
         data["timezone"] = config.timezone
     data["personality"] = {
         "name": config.personality.name,
-        "humour": config.personality.humour,
-        "honesty": config.personality.honesty,
-        "directness": config.personality.directness,
     }
     if config.personality.system_prompt:
         data["personality"]["system_prompt"] = config.personality.system_prompt

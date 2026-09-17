@@ -23,12 +23,12 @@ def test_config_show_reflects_set(tmp_path, monkeypatch, capsys):
 def test_config_set_humor_clamps_and_shows(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("RICHARD_LLM_ENDPOINT", raising=False)
-    cli.main(["config", "--set-humor", "150"])
+    cli.main(["config", "--set-name", "Tars"])
     capsys.readouterr()
     cli.main(["config", "--show"])
     out = capsys.readouterr().out
-    assert "humour:" in out
-    assert "100" in out  # 150 clamped to 100
+    assert "name:       Tars" in out
+    assert "humour" not in out
 
 
 def test_config_set_name_empty_is_ignored(tmp_path, monkeypatch, capsys):

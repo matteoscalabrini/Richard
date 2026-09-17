@@ -34,7 +34,6 @@ from richard.config import (
     Config,
     apply_home_assistant_url,
     apply_thinking_effort,
-    clamp_dial,
     load_config,
     save_config,
 )
@@ -113,9 +112,6 @@ def _config_to_dict(config: Config) -> dict:
         "llm_thinking_effort": config.llm_thinking_effort,
         "personality": {
             "name": config.personality.name,
-            "humour": config.personality.humour,
-            "honesty": config.personality.honesty,
-            "directness": config.personality.directness,
             "system_prompt": config.personality.system_prompt,
         },
         "voice": {
@@ -369,15 +365,6 @@ def _apply_config_update(config: Config, patch: dict) -> list[str]:
         if "name" in p:
             config.personality.name = str(p["name"]) or "Richard"
             changed.append("personality.name")
-        if "humour" in p:
-            config.personality.humour = clamp_dial(p["humour"])
-            changed.append("personality.humour")
-        if "honesty" in p:
-            config.personality.honesty = clamp_dial(p["honesty"])
-            changed.append("personality.honesty")
-        if "directness" in p:
-            config.personality.directness = clamp_dial(p["directness"])
-            changed.append("personality.directness")
         if "system_prompt" in p:
             config.personality.system_prompt = str(p["system_prompt"])
             changed.append("personality.system_prompt")

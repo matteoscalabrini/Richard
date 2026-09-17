@@ -565,20 +565,17 @@ SPA_HTML = r"""<!DOCTYPE html>
       </div>
     </div>
 
-    <!-- system.personality.dials -->
+    <!-- system.personality -->
     <div class="terminal-section">
       <div class="terminal-header-line" data-target="personality-content">
         <span class="terminal-prompt">&gt; </span>
-        <span class="terminal-command window-title">system.personality.dials</span>
+        <span class="terminal-command window-title">system.personality</span>
         <span class="window-control is-open">[_]</span>
       </div>
       <div class="window-content" id="personality-content">
         <p class="lede">TARS-class disposition. Dials run 0–100.</p>
         <div class="setting-group"><label class="setting-label">Name</label><input id="personality.name" class="setting-input"></div>
-        <div class="setting-group"><label class="setting-label spread">Humour <span class="dial-value" id="personality.humour.val">—</span></label><input id="personality.humour" type="range" min="0" max="100" class="dial-slider"></div>
-        <div class="setting-group"><label class="setting-label spread">Honesty <span class="dial-value" id="personality.honesty.val">—</span></label><input id="personality.honesty" type="range" min="0" max="100" class="dial-slider"></div>
-        <div class="setting-group"><label class="setting-label spread">Directness <span class="dial-value" id="personality.directness.val">—</span></label><input id="personality.directness" type="range" min="0" max="100" class="dial-slider"></div>
-        <div class="setting-group"><label class="setting-label">Base character (system prompt)</label><textarea id="personality.system_prompt" class="setting-input" rows="6" placeholder="(default)"></textarea><span class="hint">Replaces the built-in TARS base; the dials still apply below it. Blank = default. {name} is substituted. Applies after a reboot.</span></div>
+        <div class="setting-group"><label class="setting-label">Base character (system prompt)</label><textarea id="personality.system_prompt" class="setting-input" rows="6" placeholder="(default)"></textarea><span class="hint">Replaces the built-in base character. Blank = default. {name} is substituted. Applies after a reboot.</span></div>
         <div class="button-row"><button class="setting-button" data-save="personality">Save changes</button><div class="status-line" id="personality-status"></div></div>
       </div>
     </div>
@@ -963,9 +960,6 @@ const FIELDS = [
   {id:'llm_timeout', path:['llm_timeout'], t:'num', sec:'brain', req:true, min:1},
   {id:'llm_thinking_effort', path:['llm_thinking_effort'], t:'sel', sec:'brain'},
   {id:'personality.name', path:['personality','name'], t:'text', sec:'personality'},
-  {id:'personality.humour', path:['personality','humour'], t:'dial', sec:'personality'},
-  {id:'personality.honesty', path:['personality','honesty'], t:'dial', sec:'personality'},
-  {id:'personality.directness', path:['personality','directness'], t:'dial', sec:'personality'},
   {id:'personality.system_prompt', path:['personality','system_prompt'], t:'textarea', sec:'personality'},
   {id:'voice.stt_engine', path:['voice','stt_engine'], t:'sel', sec:'voice-stt'},
   {id:'voice.stt_model', path:['voice','stt_model'], t:'text', sec:'voice-stt'},
