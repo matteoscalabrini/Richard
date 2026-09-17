@@ -953,6 +953,26 @@ def test_background_message_alone_still_short_circuits_create_response():
     session.close()
 
 
+def test_background_message_precedes_a_typed_first_message():
+    engine = FakeEngine()
+    session, emitted, done = collect_session(engine=engine, detector=ScriptedDetector([]))
+    session.add_background("[catch-up] x")
+    session.create_item({"kind": "message", "content": "hello"})
+    session.create_response()
+    wait(done)
+    seen = engine.seen[0]
+    role0, content0 = seen[0]
+    assert role0 == "user" and content0 == "[catch-up] x"
+    role1, content1 = seen[1]
+    assert role1 == "user" and content1.startswith("Now: ") and content1.endswith("hello")
+    history = session.conversation.history()
+    assert [m.role for m in history[:2]] == ["user", "user"]
+    assert history[0].content == "[catch-up] x"
+    assert history[1].content.startswith("Now: ") and history[1].content.endswith("hello")
+    assert history[2].role == "assistant"
+    session.close()
+
+
 def test_close_calls_on_close_once():
     calls = []
     session, emitted, done = collect_session(
@@ -968,3 +988,13 @@ def test_close_swallows_a_raising_on_close():
 
     session, emitted, done = collect_session(detector=ScriptedDetector([]), on_close=boom)
     session.close()  # must not raise
+
+
+def test_close_calls_on_close_only_once_even_if_closed_twice():
+    calls = []
+    session, emitted, done = collect_session(
+        detector=ScriptedDetector([]), on_close=lambda: calls.append(1)
+    )
+    session.close()
+    session.close()
+    assert calls == [1]

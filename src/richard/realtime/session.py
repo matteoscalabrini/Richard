@@ -166,6 +166,10 @@ class RealtimeSession:
                 self._reset_unsolicited()
                 text = Message(role="user", content=content).text()
                 log.info("turn user: %r", text[:300])
+                with self._context_lock:
+                    background, self._background = self._background, None
+                if background:
+                    self.conversation.add_user(background)
             self.conversation.add_user(content)
             urls = vision.image_urls(content)
             if urls:
@@ -324,10 +328,11 @@ class RealtimeSession:
         return accepted
 
     def close(self) -> None:
+        already_closed = self._closed.is_set()
         self._closed.set()
         if self._registry is not None:
             self._registry.remove(self)
-        if self._on_close is not None:
+        if not already_closed and self._on_close is not None:
             try:
                 self._on_close()
             except Exception as exc:
