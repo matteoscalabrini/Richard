@@ -5,11 +5,17 @@ plain 400 for anything else (m4a, webm, too-long clips, ...). Richard forwarded
 files unchanged, so anything outside that window always failed. This transcodes
 with ffmpeg (when available) to a 24kHz mono 16-bit WAV, capped at `max_seconds`,
 before the upload — closing the biggest source of "upload failed" reports.
+
+The input goes to ffmpeg as a temporary *file*, never via stdin: MP4/M4A files
+(iPhone Voice Memos, QuickTime) store the moov index at the end, and ffmpeg cannot
+seek backwards on a pipe. On a pipe it logs "partial file", still exits 0, and emits
+a header-only WAV — which surfaced as a bogus "reference audio too short (0.0 s)".
 """
 from __future__ import annotations
 
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 from richard.voice.voices import VoiceUploadError
@@ -35,23 +41,27 @@ def to_reference_wav(
     if not binary:
         return audio, filename
 
+    suffix = Path(filename).suffix or ".bin"
     try:
-        result = subprocess.run(
-            [
-                binary,
-                "-hide_banner", "-loglevel", "error",
-                "-i", "pipe:0",
-                "-t", str(max_seconds),
-                "-ac", "1",
-                "-ar", str(_SAMPLE_RATE),
-                "-sample_fmt", "s16",
-                "-f", "wav",
-                "pipe:1",
-            ],
-            input=audio,
-            capture_output=True,
-            timeout=60,
-        )
+        with tempfile.NamedTemporaryFile(prefix="richard-ref-", suffix=suffix, delete=True) as src:
+            src.write(audio)
+            src.flush()
+            result = subprocess.run(
+                [
+                    binary,
+                    "-hide_banner", "-loglevel", "error",
+                    "-i", src.name,
+                    "-t", str(max_seconds),
+                    "-ac", "1",
+                    "-ar", str(_SAMPLE_RATE),
+                    "-sample_fmt", "s16",
+                    "-f", "wav",
+                    "pipe:1",
+                ],
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                timeout=60,
+            )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise VoiceUploadError(f"could not decode {filename}: {exc}") from exc
 

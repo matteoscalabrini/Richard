@@ -41,6 +41,10 @@ def _write_fake_ffmpeg(tmp_path: Path, *, exit_code: int, stdout: bytes, stderr:
         "import sys\n"
         "sys.stdin.buffer.read()\n"
         f"open({str(argv_file)!r}, 'w').write(repr(sys.argv))\n"
+        "if '-i' in sys.argv:\n"
+        "    src = sys.argv[sys.argv.index('-i') + 1]\n"
+        "    if src != 'pipe:0':\n"
+        f"        open({str(argv_file) + '.input'!r}, 'wb').write(open(src, 'rb').read())\n"
         f"sys.stderr.write({stderr!r})\n"
         f"data = open({str(stdout_file)!r}, 'rb').read()\n"
         "sys.stdout.buffer.write(data)\n"
@@ -59,10 +63,27 @@ def test_runs_ffmpeg_with_the_expected_arguments(tmp_path):
     assert audio == _wav_bytes(2.0)
     argv = eval(argv_file.read_text())
     assert argv[0] == str(fake)
-    assert argv[1:] == [
-        "-hide_banner", "-loglevel", "error", "-i", "pipe:0",
+    assert argv[1:4] == ["-hide_banner", "-loglevel", "error"]
+    assert argv[4] == "-i"
+    assert argv[6:] == [
         "-t", "30.0", "-ac", "1", "-ar", "24000", "-sample_fmt", "s16", "-f", "wav", "pipe:1",
     ]
+
+
+def test_feeds_ffmpeg_a_seekable_temp_file_not_stdin(tmp_path):
+    """MP4/M4A put the moov index at the end of the file; ffmpeg cannot seek back on a
+    pipe, exits 0 with a header-only WAV, and the upload is misreported as 'too short'.
+    The input must reach ffmpeg as a real file (keeping the original suffix for probing),
+    and that file must not outlive the call."""
+    fake, argv_file = _write_fake_ffmpeg(tmp_path, exit_code=0, stdout=_wav_bytes(2.0))
+    to_reference_wav(b"m4a-bytes", "samantha.m4a", ffmpeg=str(fake))
+    argv = eval(argv_file.read_text())
+    input_path = Path(argv[argv.index("-i") + 1])
+    assert input_path.suffix == ".m4a"
+    assert input_path.is_absolute()
+    recorded = Path(str(argv_file) + ".input").read_bytes()
+    assert recorded == b"m4a-bytes"
+    assert not input_path.exists()
 
 
 def test_rejects_a_clip_shorter_than_one_second(tmp_path):
