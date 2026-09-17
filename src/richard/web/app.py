@@ -49,6 +49,7 @@ from richard.realtime.cues import cue_fingerprint, cue_languages, read_cues
 from richard.realtime.cue_preparation import CuePreparation
 from richard.satellite.relays import RelayRegistry
 from richard.voice.effects import EFFECTS
+from richard.voice.transcode import to_reference_wav
 from richard.voice.voices import VoiceLibrary, VoiceUploadError
 from richard.web.static import SPA_HTML
 
@@ -819,6 +820,10 @@ class WebApp:
             return Response.json({"error": error}, 503)
         filename = str(payload.get("filename") or f"{name}.wav")
         consent = f"web-{name}-{date.today().isoformat()}"
+        try:
+            audio, filename = to_reference_wav(audio, filename)
+        except VoiceUploadError as exc:
+            return Response.json({"error": f"upload failed: {exc}"}, 400)
         try:
             library.upload(name, audio, filename, transcript=str(payload.get("transcript") or ""), consent=consent)
             listing = library.list()

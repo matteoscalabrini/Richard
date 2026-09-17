@@ -1225,7 +1225,11 @@ def test_voices_list_reports_a_dead_server(tmp_path):
     assert resp.status == 503 and "server down" in _body(resp)["error"]
 
 
-def test_voice_upload_forwards_the_sample_and_refreshes_the_list(tmp_path):
+def test_voice_upload_forwards_the_sample_and_refreshes_the_list(tmp_path, monkeypatch):
+    import shutil
+
+    # No transcoder on PATH: forwards the sample unchanged, as before transcoding existed.
+    monkeypatch.setattr(shutil, "which", lambda _: None)
     library = FakeVoiceLibrary("unused")
     app = _remote_app(tmp_path, library)
     payload = {"name": "clap1v", "transcript": "oh hi", "filename": "clap1v.wav", "audio_base64": base64.b64encode(b"RIFF....").decode()}
@@ -1238,8 +1242,77 @@ def test_voice_upload_forwards_the_sample_and_refreshes_the_list(tmp_path):
     assert consent.startswith("web-clap1v-")
 
 
-def test_voice_upload_surfaces_the_tts_server_message(tmp_path):
+def test_voice_upload_transcodes_before_forwarding(tmp_path, monkeypatch):
+    """With ffmpeg available, the uploaded bytes are transcoded to WAV before reaching the library."""
+    import shutil
+    import stat
+    import struct
+    import sys
+
+    def wav_bytes(seconds, sample_rate=24000, sample_width=2):
+        n_samples = int(seconds * sample_rate)
+        data = b"\x00" * (n_samples * sample_width)
+        header = struct.pack(
+            "<4sI4s4sIHHIIHH4sI",
+            b"RIFF", 36 + len(data), b"WAVE", b"fmt ", 16, 1, 1,
+            sample_rate, sample_rate * sample_width, sample_width, sample_width * 8,
+            b"data", len(data),
+        )
+        return header + data
+
+    transcoded = wav_bytes(2.0)
+    fake = tmp_path / "ffmpeg"
+    fake.write_text(
+        f"#!{sys.executable}\n"
+        "import sys\n"
+        "sys.stdin.buffer.read()\n"
+        f"sys.stdout.buffer.write({transcoded!r})\n"
+    )
+    fake.chmod(fake.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    monkeypatch.setattr(shutil, "which", lambda name: str(fake) if name == "ffmpeg" else None)
+
+    library = FakeVoiceLibrary("unused")
+    app = _remote_app(tmp_path, library)
+    payload = {"name": "clap1v", "filename": "clap1v.m4a", "audio_base64": base64.b64encode(b"m4a-bytes").decode()}
+    resp = app.handle("POST", "/api/voices", json.dumps(payload).encode())
+    assert resp.status == 200, resp.body
+    name, audio, filename, transcript, consent = library.uploads[0]
+    assert (name, audio, filename) == ("clap1v", transcoded, "clap1v.wav")
+
+
+def test_voice_upload_rejects_undecodable_audio(tmp_path, monkeypatch):
+    """A clip ffmpeg can't decode surfaces as a 400 with the decode failure, not a crash."""
+    import shutil
+    import stat
+    import sys
+
+    fake = tmp_path / "ffmpeg"
+    fake.write_text(
+        f"#!{sys.executable}\n"
+        "import sys\n"
+        "sys.stdin.buffer.read()\n"
+        "sys.stderr.write('Could not decode audio file: garbage. Format not recognised.')\n"
+        "sys.exit(1)\n"
+    )
+    fake.chmod(fake.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    monkeypatch.setattr(shutil, "which", lambda name: str(fake) if name == "ffmpeg" else None)
+
+    library = FakeVoiceLibrary("unused")
+    app = _remote_app(tmp_path, library)
+    payload = {"name": "clap1v", "filename": "clap1v.mov", "audio_base64": base64.b64encode(b"garbage").decode()}
+    resp = app.handle("POST", "/api/voices", json.dumps(payload).encode())
+    assert resp.status == 400
+    assert "could not decode" in _body(resp)["error"]
+    assert library.uploads == []
+
+
+def test_voice_upload_surfaces_the_tts_server_message(tmp_path, monkeypatch):
+    import shutil
+
     from richard.voice.voices import VoiceUploadError
+
+    # No transcoder on PATH: exercises the library-rejection path, not ffmpeg's.
+    monkeypatch.setattr(shutil, "which", lambda _: None)
 
     class FailingLibrary(FakeVoiceLibrary):
         def upload(self, name, audio, filename, *, transcript="", consent=""):
